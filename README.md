@@ -50,7 +50,8 @@ bun run client Alice
 bun run client Bob
 ```
 
-The first player to join becomes the drawer and a new turn begins automatically.
+The first player to join is the **host**. Once a second player joins, the host
+presses **`S`** to start the game — turns do not begin automatically.
 
 ---
 
@@ -98,8 +99,15 @@ All support Docker — point them at the `Dockerfile` and set `PORT=3017`.
 
 ## How to Play
 
-- The **drawer** sees the secret word and paints it on the canvas with the mouse.
+- The **host** (first player to join) presses `S` in the lobby to start the game
+  once at least two players are present. The room code is shown on top of the
+  canvas — press `Ctrl+Y` to copy it, or share it so friends can join.
+- At the start of each turn the **drawer** is offered **three words** and picks one
+  by pressing `1`, `2`, or `3` (auto-picks if they run out of time).
+- The drawer then sees the secret word and paints it on the canvas with the mouse.
   Everyone else sees a masked hint like `_ A _ _ E R` and races to type the answer.
+  The drawing is **resolution-independent**, so every player sees the same picture
+  regardless of their terminal size.
 - **Guess** by typing in the chat box and pressing Enter. Correct guesses are
   hidden from other players. Faster guesses earn more points; the drawer scores
   for every correct guess.
@@ -109,6 +117,9 @@ All support Docker — point them at the `Dockerfile` and set `PORT=3017`.
 
 | Key                           | Action                                               |
 | ----------------------------- | ---------------------------------------------------- |
+| `S`                           | Start the game (host only, in the lobby)             |
+| `1`–`3`                       | Pick your word (drawer only, while choosing)         |
+| Ctrl+Y                        | Copy the room code to your clipboard                 |
 | **Mouse drag**                | Paint on the canvas (drawer only)                    |
 | Tab                           | Toggle focus between chat input and command mode     |
 | `b`                           | Toggle braille (fine) vs block (`█`) brush†          |
@@ -164,7 +175,10 @@ src/
 | Packet         | Direction        | Payload                                                              |
 | -------------- | ---------------- | -------------------------------------------------------------------- |
 | `JOIN`         | client → server  | `{ name }`                                                           |
-| `DRAW_POINT`   | drawer ↔ lobby   | `{ x, y, color, mode, drag }`                                        |
+| `START_GAME`   | host → server    | *(none)* — only the host may start                                  |
+| `WORD_CHOICES` | server → drawer  | `{ words }` — the three words to choose from (drawer only)          |
+| `CHOOSE_WORD`  | drawer → server  | `{ index }` — which offered word the drawer picked                  |
+| `DRAW_POINT`   | drawer ↔ lobby   | `{ x, y, color, mode, size, erase, drag }` — `x`/`y`/`size` normalized |
 | `CHAT_MESSAGE` | client ↔ lobby   | `{ sender, content }` (evaluated as a guess)                         |
 | `SYSTEM_ALERT` | server → clients | `{ kind, text }`                                                     |
 | `CLEAR_BOARD`  | drawer ↔ lobby   | *(none)*                                                             |

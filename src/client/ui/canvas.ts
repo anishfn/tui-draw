@@ -52,6 +52,8 @@ export interface CanvasHandle {
   replay(points: readonly DrawPointPayload[]): void;
   clear(): void;
   setInteractive(on: boolean): void;
+  /** Explicitly size the canvas (cells) to fit its laid-out pane. */
+  resize(width: number, height: number): void;
 }
 
 export interface CanvasOptions {
@@ -69,8 +71,13 @@ export function createCanvas(
   renderer: CliRenderer,
   opts: CanvasOptions,
 ): CanvasHandle {
-  let cols = Math.max(1, renderer.width);
-  let rows = Math.max(1, renderer.height);
+  // Start at a 1×1 placeholder; the real size is driven by `resize()` from the
+  // dashboard once the pane has been laid out. A FrameBufferRenderable's buffer
+  // size is fixed by its explicit width/height and its content blits with NO
+  // clipping, so flex-growing it on the cross axis would let a wide drawing
+  // overflow into the sidebar — instead we size it explicitly to the pane.
+  let cols = 1;
+  let rows = 1;
   let dotW = cols * 2;
   let dotH = rows * 4;
 
@@ -87,8 +94,8 @@ export function createCanvas(
     width: cols,
     height: rows,
     respectAlpha: true,
-    flexGrow: 1,
-    flexShrink: 1,
+    flexGrow: 0,
+    flexShrink: 0,
     onSizeChange() {
       resizeModel(fb.frameBuffer.width, fb.frameBuffer.height);
     },
@@ -336,19 +343,57 @@ export function createCanvas(
     const cy = Math.floor(event.y - fb.y);
     if (cx < 0 || cy < 0 || cx >= cols || cy >= rows) return;
 
-    const point = {
-      x: cx,
-      y: cy,
-      color: opts.getColor(),
-      mode: opts.getMode(),
-      size: Math.max(1, Math.floor(opts.getSize())),
-      erase: opts.getErase(),
-      drag,
-    } satisfies DrawPointPayload;
+    const mode = opts.getMode();
+    const realSize = Math.max(1, Math.floor(opts.getSize()));
+    const color = opts.getColor();
+    const erase = opts.getErase();
 
-    flush(stamp(cx, cy, drag ? lastLocal : null, point));
+    // Wire format is resolution- and aspect-independent: position is normalized
+    // to [0,1) across this canvas, `ar` carries our dot-space aspect ratio, and
+    // the brush radius is normalized to a fraction of canvas height in dots.
+    // Receivers letterbox by `ar` so the drawing keeps its shape everywhere.
+    const realDots = mode === "block" ? realSize * 4 : realSize;
+    const point: DrawPointPayload = {
+      x: cx / cols,
+      y: cy / rows,
+      ar: dotW / dotH,
+      color,
+      mode,
+      size: realDots / dotH,
+      erase,
+      drag,
+    };
+
+    // Render our own stroke at full local resolution for crisp feedback.
+    flush(stamp(cx, cy, drag ? lastLocal : null, { color, mode, size: realSize, erase }));
     lastLocal = { x: cx, y: cy };
     opts.onDraw(point);
+  }
+
+  /**
+   * Convert a normalized wire payload into this canvas's local cell space,
+   * letterboxing by the drawer's aspect ratio so the shape is preserved.
+   */
+  function localFromPayload(p: DrawPointPayload): { cx: number; cy: number; size: number } {
+    // Fit a rectangle of aspect `ar` (intrinsic size ar × 1) into our dot grid.
+    const ar = p.ar > 0 ? p.ar : dotW / dotH;
+    const scale = Math.min(dotW / ar, dotH);
+    const renderedW = ar * scale;
+    const renderedH = scale;
+    const offX = (dotW - renderedW) / 2;
+    const offY = (dotH - renderedH) / 2;
+
+    const gx = offX + p.x * renderedW; // dot-space coordinates on our canvas
+    const gy = offY + p.y * renderedH;
+    const cx = Math.min(cols - 1, Math.max(0, Math.floor(gx / 2)));
+    const cy = Math.min(rows - 1, Math.max(0, Math.floor(gy / 4)));
+
+    const radiusDots = p.size * scale;
+    const size =
+      p.mode === "block"
+        ? Math.max(0, Math.round(radiusDots / 4))
+        : Math.max(1, Math.round(radiusDots));
+    return { cx, cy, size };
   }
 
   /* --------------------------------------------------------------------- */
@@ -365,16 +410,30 @@ export function createCanvas(
     renderable: fb,
 
     apply(point) {
-      flush(stamp(point.x, point.y, point.drag ? lastRemote : null, point));
-      lastRemote = { x: point.x, y: point.y };
+      const { cx, cy, size } = localFromPayload(point);
+      flush(
+        stamp(cx, cy, point.drag ? lastRemote : null, {
+          color: point.color,
+          mode: point.mode,
+          size,
+          erase: point.erase,
+        }),
+      );
+      lastRemote = { x: cx, y: cy };
     },
 
     replay(points) {
       wipe();
       lastRemote = null;
       for (const p of points) {
-        stamp(p.x, p.y, p.drag ? lastRemote : null, p);
-        lastRemote = { x: p.x, y: p.y };
+        const { cx, cy, size } = localFromPayload(p);
+        stamp(cx, cy, p.drag ? lastRemote : null, {
+          color: p.color,
+          mode: p.mode,
+          size,
+          erase: p.erase,
+        });
+        lastRemote = { x: cx, y: cy };
       }
       redrawAll();
     },
@@ -389,6 +448,15 @@ export function createCanvas(
     setInteractive(on) {
       interactive = on;
       if (!on) lastLocal = null;
+    },
+
+    resize(width, height) {
+      const nw = Math.max(1, Math.floor(width));
+      const nh = Math.max(1, Math.floor(height));
+      // Setting the renderable's explicit size triggers the library's
+      // onResize → onSizeChange → resizeModel, keeping the model in sync.
+      if (fb.width !== nw) fb.width = nw;
+      if (fb.height !== nh) fb.height = nh;
     },
   };
 }

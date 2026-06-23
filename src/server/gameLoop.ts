@@ -43,10 +43,16 @@ const WORDS: readonly string[] = [
 
 /** How long each drawing turn lasts, in seconds. */
 const TURN_SECONDS = 80;
+/** How long the drawer has to pick one of the three offered words. */
+const SELECT_SECONDS = 15;
 /** Pause between turns so players can read the scoreboard. */
 const INTERMISSION_SECONDS = 5;
 /** Points awarded to the drawer each time someone guesses correctly. */
 const DRAWER_REWARD = 25;
+/** How many words the drawer chooses between at the start of a turn. */
+const WORD_CHOICE_COUNT = 3;
+/** Minimum players required before the host may start the game. */
+export const MIN_PLAYERS_TO_START = 2;
 
 /**
  * The internal player record. Mirrors the public {@link Player} but also tracks
@@ -62,6 +68,8 @@ export interface GameLoopHooks {
   broadcastAlert: (alert: SystemAlertPayload) => void;
   /** Order every client to wipe its canvas. */
   broadcastClear: () => void;
+  /** Privately offer the drawer their three word choices. */
+  sendChoices: (drawerId: string, words: string[]) => void;
 }
 
 export class GameLoop {
@@ -70,7 +78,11 @@ export class GameLoop {
   private rotation: string[] = [];
   private phase: GamePhase = "lobby";
   private drawerId: string | null = null;
+  /** The host (room creator / first joiner) — only they can start the game. */
+  private hostId: string | null = null;
   private word: string | null = null;
+  /** The three words currently offered to the drawer during `selecting`. */
+  private choices: string[] = [];
   private timeLeft = 0;
   private round = 0;
   /** Replay buffer for the current turn's strokes. */
@@ -118,12 +130,12 @@ export class GameLoop {
     this.players.set(id, player);
     this.rotation.push(id);
 
-    // If we were idling in the lobby and now have enough players, kick off.
-    if (this.phase === "lobby" && this.players.size >= 1) {
-      this.beginTurn();
-    } else {
-      this.hooks.broadcastSnapshot();
-    }
+    // The first player to arrive becomes the host who starts the game.
+    if (this.hostId === null) this.hostId = id;
+
+    // The game never auto-starts: the host kicks it off explicitly. New joiners
+    // simply appear in the roster (and spectate until the next turn mid-game).
+    this.hooks.broadcastSnapshot();
     return player;
   }
 
@@ -135,12 +147,25 @@ export class GameLoop {
     this.rotation = this.rotation.filter((p) => p !== id);
     if (this.rotationCursor > this.rotation.length) this.rotationCursor = 0;
 
+    // Hand the host crown to the next remaining player if the host left.
+    if (this.hostId === id) this.hostId = this.rotation[0] ?? null;
+
     if (this.players.size === 0) {
       this.gotoLobby();
       return;
     }
+    // Not enough players to keep playing — fall back to the lobby and wait for
+    // the host to start again once someone else joins.
+    if (this.players.size < MIN_PLAYERS_TO_START && this.phase !== "lobby") {
+      this.hooks.broadcastAlert({
+        kind: "round",
+        text: "Not enough players — back to the lobby.",
+      });
+      this.gotoLobby();
+      return;
+    }
     // If the drawer dropped, the turn cannot continue — move on immediately.
-    if (wasDrawer && this.phase === "drawing") {
+    if (wasDrawer && (this.phase === "drawing" || this.phase === "selecting")) {
       this.hooks.broadcastAlert({
         kind: "info",
         text: "The drawer left — starting a new turn.",
@@ -154,6 +179,37 @@ export class GameLoop {
   /** Whether the given player currently holds the pen. */
   isDrawer(id: string): boolean {
     return this.drawerId === id;
+  }
+
+  /* ----------------------------------------------------------------------- */
+  /* Host / start-game controls                                              */
+  /* ----------------------------------------------------------------------- */
+
+  /**
+   * Start the game on the host's request. No-op unless the requester is the
+   * host, we're idling in the lobby, and there are enough players.
+   */
+  startGame(playerId: string): void {
+    if (playerId !== this.hostId) return;
+    if (this.phase !== "lobby") return;
+    if (this.players.size < MIN_PLAYERS_TO_START) {
+      this.hooks.broadcastAlert({
+        kind: "info",
+        text: `Need at least ${MIN_PLAYERS_TO_START} players to start.`,
+      });
+      return;
+    }
+    this.round = 0;
+    this.rotationCursor = 0;
+    this.beginSelection();
+  }
+
+  /** The drawer commits to one of the three offered words. */
+  chooseWord(playerId: string, index: number): void {
+    if (this.phase !== "selecting" || playerId !== this.drawerId) return;
+    const picked = this.choices[index];
+    if (!picked) return;
+    this.beginDrawing(picked);
   }
 
   /** Current game phase (for room info snapshots). */
@@ -241,6 +297,8 @@ export class GameLoop {
       phase: this.phase,
       players: [...this.players.values()].map((p) => ({ ...p })),
       drawerId: this.drawerId,
+      selfId: forId ?? "",
+      hostId: this.hostId,
       hint: this.maskedHint(),
       word: this.phase === "drawing" && forId !== null && forId === this.drawerId ? this.word : null,
       timeLeft: this.timeLeft,
@@ -254,7 +312,15 @@ export class GameLoop {
   /* ----------------------------------------------------------------------- */
 
   private tick(): void {
-    if (this.phase === "drawing") {
+    if (this.phase === "selecting") {
+      this.timeLeft -= 1;
+      if (this.timeLeft <= 0) {
+        // Out of time picking — auto-select the first offered word.
+        this.beginDrawing(this.choices[0] ?? "answer");
+        return;
+      }
+      this.hooks.broadcastSnapshot();
+    } else if (this.phase === "drawing") {
       this.timeLeft -= 1;
       if (this.timeLeft <= 0) {
         this.hooks.broadcastAlert({
@@ -271,13 +337,18 @@ export class GameLoop {
       this.hooks.broadcastSnapshot();
     } else if (this.phase === "intermission") {
       this.timeLeft -= 1;
-      if (this.timeLeft <= 0) this.beginTurn();
+      if (this.timeLeft <= 0) this.beginSelection();
       else this.hooks.broadcastSnapshot();
     }
   }
 
-  private beginTurn(): void {
-    if (this.players.size === 0) {
+  /**
+   * Advance to the next drawer and offer them three words to pick from. The
+   * choices are sent privately to the drawer; everyone else just sees that the
+   * drawer is choosing.
+   */
+  private beginSelection(): void {
+    if (this.players.size < MIN_PLAYERS_TO_START) {
       this.gotoLobby();
       return;
     }
@@ -302,12 +373,31 @@ export class GameLoop {
     const drawer = this.players.get(drawerId);
     if (drawer) drawer.isDrawing = true;
 
-    this.word = WORDS[Math.floor(Math.random() * WORDS.length)] ?? "answer";
-    this.timeLeft = TURN_SECONDS;
-    this.phase = "drawing";
+    this.word = null;
+    this.choices = this.pickWords(WORD_CHOICE_COUNT);
+    this.phase = "selecting";
+    this.timeLeft = SELECT_SECONDS;
     this.clearHistory();
     this.hooks.broadcastClear();
 
+    this.hooks.broadcastAlert({
+      kind: "role",
+      text: `${drawer?.name ?? "Someone"} is choosing a word…`,
+    });
+    this.hooks.sendChoices(drawerId, this.choices);
+    this.hooks.broadcastSnapshot();
+  }
+
+  /** Lock in the chosen word and open the drawing turn. */
+  private beginDrawing(word: string): void {
+    this.word = word;
+    this.choices = [];
+    this.phase = "drawing";
+    this.timeLeft = TURN_SECONDS;
+    this.clearHistory();
+    this.hooks.broadcastClear();
+
+    const drawer = this.drawerId ? this.players.get(this.drawerId) : undefined;
     this.hooks.broadcastAlert({
       kind: "role",
       text: `${drawer?.name ?? "Someone"} is drawing — start guessing!`,
@@ -318,6 +408,7 @@ export class GameLoop {
   private beginIntermission(): void {
     this.phase = "intermission";
     this.timeLeft = INTERMISSION_SECONDS;
+    this.choices = [];
     if (this.drawerId) {
       const drawer = this.players.get(this.drawerId);
       if (drawer) drawer.isDrawing = false;
@@ -329,6 +420,7 @@ export class GameLoop {
     this.phase = "lobby";
     this.drawerId = null;
     this.word = null;
+    this.choices = [];
     this.timeLeft = 0;
     this.clearHistory();
     this.hooks.broadcastSnapshot();
@@ -348,6 +440,17 @@ export class GameLoop {
       }
     }
     return AVATARS[Math.floor(Math.random() * AVATARS.length)] ?? "🎭";
+  }
+
+  /** Pick `n` distinct random words from the bank for the drawer to choose. */
+  private pickWords(n: number): string[] {
+    const pool = [...WORDS];
+    const out: string[] = [];
+    for (let i = 0; i < n && pool.length > 0; i++) {
+      const idx = Math.floor(Math.random() * pool.length);
+      out.push(pool.splice(idx, 1)[0]!);
+    }
+    return out;
   }
 
   private pickColor(): Color {
