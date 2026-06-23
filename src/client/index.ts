@@ -1,6 +1,6 @@
 import { CliRenderEvents, createCliRenderer } from "@opentui/core";
 import {
-  DEFAULT_PORT,
+  DEFAULT_SERVER_URL,
   PacketType,
   decodePacket,
   encodePacket,
@@ -41,8 +41,7 @@ export async function startClient(config: ClientConfig = {}): Promise<void> {
     (config.name ?? process.env.NAME ?? "").trim().slice(0, 16) ||
     `Artist-${Math.floor(1000 + Math.random() * 9000)}`;
 
-  const PORT = Number(process.env.PORT ?? DEFAULT_PORT);
-  const SERVER_URL = config.serverUrl ?? process.env.SERVER ?? `ws://localhost:${PORT}`;
+  const SERVER_URL = config.serverUrl ?? process.env.SERVER ?? DEFAULT_SERVER_URL;
 
   const renderer = await createCliRenderer({
     exitOnCtrlC: true,
