@@ -31,15 +31,24 @@ export interface FeedLine {
 export class ClientState {
   /** This client's chosen display name. */
   myName = "";
+  /** This client's server-assigned player id (from the personalized snapshot). */
+  selfId = "";
   /** This client's server-assigned drawer flag (derived from snapshots). */
   amDrawing = false;
+  /** True while we are the drawer choosing a word (selecting phase). */
+  amChoosing = false;
+  /** True when we are the room host (may start the game). */
+  amHost = false;
 
   phase: GamePhase = "lobby";
   players: Player[] = [];
   drawerId: string | null = null;
+  hostId: string | null = null;
   hint = "";
   /** Populated only when we are the drawer. */
   word: string | null = null;
+  /** The three words offered to us while choosing (drawer-only). */
+  wordChoices: string[] = [];
   timeLeft = 0;
   round = 0;
 

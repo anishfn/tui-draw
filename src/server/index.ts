@@ -136,6 +136,21 @@ function handlePacket(ws: ServerWebSocket<Session>, packet: Packet): void {
     /* In-game (must be in a room)                                         */
     /* ------------------------------------------------------------------ */
 
+    case PacketType.START_GAME: {
+      const room = ws.data.roomId ? registry.get(ws.data.roomId) : undefined;
+      if (!room) break;
+      room.startGame(ws.data.id);
+      pushRoomList();
+      break;
+    }
+
+    case PacketType.CHOOSE_WORD: {
+      const room = ws.data.roomId ? registry.get(ws.data.roomId) : undefined;
+      if (!room) break;
+      room.chooseWord(ws.data.id, packet.index);
+      break;
+    }
+
     case PacketType.DRAW_POINT: {
       const room = ws.data.roomId ? registry.get(ws.data.roomId) : undefined;
       if (!room || !room.isDrawer(ws.data.id)) break;
@@ -176,6 +191,7 @@ function handlePacket(ws: ServerWebSocket<Session>, packet: Packet): void {
     case PacketType.ROOM_ERROR:
     case PacketType.SYSTEM_ALERT:
     case PacketType.STATE_SYNC:
+    case PacketType.WORD_CHOICES:
       break;
   }
 }

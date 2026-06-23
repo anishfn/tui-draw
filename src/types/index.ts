@@ -21,21 +21,34 @@ export type DrawMode = "braille" | "block";
 /* -------------------------------------------------------------------------- */
 
 /**
- * A single paint sample. Coordinates are expressed in **canvas cell space**
- * (integer column/row of the drawing grid), keeping packets tiny. Each client
- * is responsible for interpolating between consecutive samples of a stroke and
- * for up-scaling into braille sub-dot space locally.
+ * A single paint sample. Coordinates are **resolution-independent**: `x` and
+ * `y` are normalized to the `[0, 1)` range across the drawer's canvas (column /
+ * cols, row / rows), and `size` is a fraction of the canvas width. This lets
+ * every client render the same picture scaled to its own terminal size, so two
+ * players with differently-sized terminals see an identical drawing instead of
+ * one seeing it shrunk into a corner. Each client interpolates between
+ * consecutive samples and up-scales into braille sub-dot space locally.
  */
 export interface DrawPointPayload {
-  /** Cell column (terminal mouse resolution). */
+  /** Normalized column in `[0, 1)` (drawer cell column ÷ drawer cols). */
   x: number;
-  /** Cell row (terminal mouse resolution). */
+  /** Normalized row in `[0, 1)` (drawer cell row ÷ drawer rows). */
   y: number;
+  /**
+   * The drawer's canvas aspect ratio in dot space (`width ÷ height`). Receivers
+   * use it to letterbox the drawing into their own canvas while preserving the
+   * original shape, so a wider/narrower terminal never stretches the picture.
+   */
+  ar: number;
   /** Stroke color. */
   color: Color;
   /** Rendering strategy chosen by the drawer at sample time. */
   mode: DrawMode;
-  /** Brush radius (in braille dots for braille mode, in cells for block mode). */
+  /**
+   * Normalized brush radius, expressed as a fraction of the drawer's canvas
+   * height in dots. The receiver multiplies it by the fitted scale so the brush
+   * stays proportional to the letterboxed drawing.
+   */
   size: number;
   /** When `true`, this stamp removes ink instead of adding it (eraser). */
   erase: boolean;
@@ -83,8 +96,14 @@ export interface Player {
   color: Color;
 }
 
-/** Phase of the authoritative game loop. */
-export type GamePhase = "lobby" | "drawing" | "intermission";
+/**
+ * Phase of the authoritative game loop.
+ * - `lobby`       — waiting for the host to start the game.
+ * - `selecting`   — the drawer is picking one of three words.
+ * - `drawing`     — a turn is in progress.
+ * - `intermission`— short pause between turns showing the scoreboard.
+ */
+export type GamePhase = "lobby" | "selecting" | "drawing" | "intermission";
 
 /** Summary of a room sent to clients in the lobby. */
 export interface RoomInfo {
@@ -107,13 +126,17 @@ export interface RoomInfo {
 export interface GameSnapshot {
   phase: GamePhase;
   players: Player[];
-  /** Player id currently drawing, or null in lobby/intermission. */
+  /** Player id currently drawing/choosing, or null in lobby/intermission. */
   drawerId: string | null;
+  /** The recipient's own player id (so the client can identify itself). */
+  selfId: string;
+  /** Player id of the room host (who may start the game), or null. */
+  hostId: string | null;
   /** Masked word hint for guessers, e.g. "_ A _ _ E R". */
   hint: string;
   /** Whole word — only ever populated for the drawer's own snapshot. */
   word: string | null;
-  /** Seconds remaining in the current turn. */
+  /** Seconds remaining in the current turn / selection window. */
   timeLeft: number;
   /** Current round number (1-based). */
   round: number;
@@ -136,6 +159,9 @@ export const PacketType = {
   ROOM_ERROR: "ROOM_ERROR",
   LEAVE_ROOM: "LEAVE_ROOM",
   // In-game
+  START_GAME: "START_GAME",
+  WORD_CHOICES: "WORD_CHOICES",
+  CHOOSE_WORD: "CHOOSE_WORD",
   DRAW_POINT: "DRAW_POINT",
   CHAT_MESSAGE: "CHAT_MESSAGE",
   SYSTEM_ALERT: "SYSTEM_ALERT",
@@ -161,6 +187,9 @@ export type Packet =
   | { t: typeof PacketType.ROOM_ERROR; text: string }
   | { t: typeof PacketType.LEAVE_ROOM }
   // In-game
+  | { t: typeof PacketType.START_GAME }
+  | { t: typeof PacketType.WORD_CHOICES; words: string[] }
+  | { t: typeof PacketType.CHOOSE_WORD; index: number }
   | { t: typeof PacketType.DRAW_POINT; point: DrawPointPayload }
   | { t: typeof PacketType.CHAT_MESSAGE; msg: ChatMessagePayload }
   | { t: typeof PacketType.SYSTEM_ALERT; alert: SystemAlertPayload }
@@ -203,6 +232,9 @@ export function decodePacket(raw: string | Buffer | ArrayBuffer): Packet | null 
       case PacketType.ROOM_JOINED:
       case PacketType.ROOM_ERROR:
       case PacketType.LEAVE_ROOM:
+      case PacketType.START_GAME:
+      case PacketType.WORD_CHOICES:
+      case PacketType.CHOOSE_WORD:
       case PacketType.DRAW_POINT:
       case PacketType.CHAT_MESSAGE:
       case PacketType.SYSTEM_ALERT:

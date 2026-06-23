@@ -21,7 +21,7 @@ const PALETTE = [
 ] as const;
 
 const FOOTER =
-  "⇆ Tab chat · ✎ b brush · 🧹 e eraser · ↔ [ ] size · 🎨 1-8 color · 🗑 c clear · Esc leave room · ⏻ Ctrl+C quit";
+  "▶ S start · 🔤 1-3 pick word · ⇆ Tab chat · ✎ b brush · 🧹 e eraser · ↔ [ ] size · 🎨 1-8 color · 🗑 c clear · 📋 Ctrl+Y copy code · Esc leave · ⏻ Ctrl+C quit";
 
 export interface ClientConfig {
   name?: string;
@@ -118,11 +118,18 @@ export async function startClient(config: ClientConfig = {}): Promise<void> {
     if (state.inRoom) {
       dash.sidebar.setPlayers(state.players, state.drawerId, state.myName);
       dash.sidebar.setFeed(state.feed);
+      const drawer = state.players.find((p) => p.id === state.drawerId);
       dash.setCanvasStatus({
+        phase: state.phase,
         hint: state.amDrawing ? (state.word ?? "") : state.hint,
         timeLeft: state.timeLeft,
         round: state.round,
         drawing: state.amDrawing,
+        choosing: state.amChoosing,
+        amHost: state.amHost,
+        enoughPlayers: state.players.length >= 2,
+        drawerName: drawer?.name ?? "",
+        wordChoices: state.wordChoices,
         mode: state.drawMode,
         color: state.drawColor,
         size: state.brushSize,
@@ -141,11 +148,16 @@ export async function startClient(config: ClientConfig = {}): Promise<void> {
   let firstSync = true;
   let prevDrawerId: string | null = null;
   let prevRound = -1;
-  let prevAmDrawing = false;
+  let prevWantInput = true;
 
-  const focusForRole = (drawing: boolean): void => {
-    if (drawing) { inputFocused = false; dash.sidebar.input.blur(); }
-    else { inputFocused = true; dash.sidebar.input.focus(); }
+  // The chat input should hold focus only when we can usefully type into it:
+  // while guessing during a drawing turn, or during the intermission scoreboard.
+  const applyFocus = (wantInput: boolean): void => {
+    if (wantInput === prevWantInput) return;
+    prevWantInput = wantInput;
+    inputFocused = wantInput;
+    if (wantInput) dash.sidebar.input.focus();
+    else dash.sidebar.input.blur();
   };
 
   const onPacket = (packet: Packet): void => {
@@ -170,7 +182,8 @@ export async function startClient(config: ClientConfig = {}): Promise<void> {
         firstSync = true;
         prevDrawerId = null;
         prevRound = -1;
-        prevAmDrawing = false;
+        prevWantInput = true;
+        dash.setRoom(packet.roomId, packet.roomName);
         switchToGame();
         break;
 
@@ -184,20 +197,31 @@ export async function startClient(config: ClientConfig = {}): Promise<void> {
         state.phase = s.phase;
         state.players = s.players;
         state.drawerId = s.drawerId;
+        state.selfId = s.selfId;
+        state.hostId = s.hostId;
         state.hint = s.hint;
         state.word = s.word;
         state.timeLeft = s.timeLeft;
         state.round = s.round;
-        state.amDrawing = s.word !== null;
+        state.amHost = s.selfId !== "" && s.selfId === s.hostId;
+        state.amDrawing = s.phase === "drawing" && s.selfId === s.drawerId;
+        state.amChoosing = s.phase === "selecting" && s.selfId === s.drawerId;
+        // Word choices only matter while we're actively choosing.
+        if (!state.amChoosing) state.wordChoices = [];
         const turnChanged = s.drawerId !== prevDrawerId || s.round !== prevRound;
         if (firstSync || turnChanged) { dash.canvas.replay(s.history); firstSync = false; }
-        if (state.amDrawing !== prevAmDrawing) focusForRole(state.amDrawing);
-        prevAmDrawing = state.amDrawing;
+        const wantInput = (s.phase === "drawing" && !state.amDrawing) || s.phase === "intermission";
+        applyFocus(wantInput);
         prevDrawerId = s.drawerId;
         prevRound = s.round;
         state.emitChange();
         break;
       }
+
+      case PacketType.WORD_CHOICES:
+        state.wordChoices = packet.words;
+        state.emitChange();
+        break;
 
       case PacketType.DRAW_POINT:   dash.canvas.apply(packet.point); break;
       case PacketType.CLEAR_BOARD:  dash.canvas.clear(); break;
@@ -217,6 +241,8 @@ export async function startClient(config: ClientConfig = {}): Promise<void> {
       case PacketType.CREATE_ROOM:
       case PacketType.JOIN_ROOM:
       case PacketType.LEAVE_ROOM:
+      case PacketType.START_GAME:
+      case PacketType.CHOOSE_WORD:
         break;
     }
   };
@@ -261,11 +287,20 @@ export async function startClient(config: ClientConfig = {}): Promise<void> {
       return;
     }
 
-    if (key.name === "tab") {
-      inputFocused = !inputFocused;
-      if (inputFocused) dash.sidebar.input.focus();
-      else dash.sidebar.input.blur();
-      renderer.requestRender();
+    // Copy the room code to the system clipboard (OSC 52) — works even though
+    // the mouse is captured by the canvas, so players can't select text.
+    if (key.ctrl && key.name === "y") {
+      if (state.roomId) {
+        const ok = renderer.copyToClipboardOSC52(state.roomId);
+        state.pushFeed({
+          kind: "system",
+          text: ok
+            ? `Room code ${state.roomId} copied to clipboard.`
+            : `Room code is ${state.roomId} (clipboard not supported here).`,
+          color: "#9ccfd8",
+        });
+        state.emitChange();
+      }
       return;
     }
 
@@ -276,6 +311,31 @@ export async function startClient(config: ClientConfig = {}): Promise<void> {
       state.roomId = null;
       dash.canvas.clear();
       switchToLobby();
+      return;
+    }
+
+    // Lobby phase: the host starts the game with [S].
+    if (state.phase === "lobby") {
+      if (key.name === "s" && state.amHost) send({ t: PacketType.START_GAME });
+      return;
+    }
+
+    // Selecting phase: the drawer picks one of the three offered words.
+    if (state.phase === "selecting") {
+      if (state.amChoosing) {
+        const n = Number(key.name);
+        if (Number.isInteger(n) && n >= 1 && n <= state.wordChoices.length) {
+          send({ t: PacketType.CHOOSE_WORD, index: n - 1 });
+        }
+      }
+      return;
+    }
+
+    if (key.name === "tab") {
+      inputFocused = !inputFocused;
+      if (inputFocused) dash.sidebar.input.focus();
+      else dash.sidebar.input.blur();
+      renderer.requestRender();
       return;
     }
 

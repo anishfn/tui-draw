@@ -33,6 +33,16 @@ export class Room {
       broadcastAlert: (alert: SystemAlertPayload) =>
         this.broadcast({ t: PacketType.SYSTEM_ALERT, alert }),
       broadcastClear: () => this.broadcast({ t: PacketType.CLEAR_BOARD }),
+      sendChoices: (drawerId: string, words: string[]) => {
+        const ws = this.clients.get(drawerId);
+        if (ws) {
+          try {
+            ws.send(encodePacket({ t: PacketType.WORD_CHOICES, words }));
+          } catch {
+            /* ignore dead socket */
+          }
+        }
+      },
     });
     this.game.start();
   }
@@ -71,6 +81,14 @@ export class Room {
 
   isDrawer(id: string): boolean {
     return this.game.isDrawer(id);
+  }
+
+  startGame(playerId: string): void {
+    this.game.startGame(playerId);
+  }
+
+  chooseWord(playerId: string, index: number): void {
+    this.game.chooseWord(playerId, index);
   }
 
   recordPoint(point: DrawPointPayload): void {
