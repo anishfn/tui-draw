@@ -251,3 +251,15 @@ export function decodePacket(raw: string | Buffer | ArrayBuffer): Packet | null 
 
 /** The default room/port the server and client agree on out of the box. */
 export const DEFAULT_PORT = 3017;
+
+/**
+ * The single, fixed game server every client connects to.
+ *
+ * ⬇⬇⬇  SET THIS to your RDP server's public IP or domain.  ⬇⬇⬇
+ * Examples:  "ws://203.0.113.10:3017"   or   "wss://draw.example.com"
+ *
+ * The `SERVER` environment variable still overrides this if set (handy for the
+ * host's own local testing), but normal users never need to touch it — running
+ * `tui-draw` just connects here.
+ */
+export const DEFAULT_SERVER_URL = "ws://YOUR-RDP-IP:3017";

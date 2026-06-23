@@ -32,26 +32,37 @@ TUI. No Ink, no DOM wrappers, no Electron.
 
 ## Quick Start
 
+There is **one fixed server** that every client connects to. Set its address
+once in `src/types/index.ts` (`DEFAULT_SERVER_URL`) to your server's public IP
+or domain, e.g. `ws://203.0.113.10:3017`. See [Hosting](#hosting) for running
+that server on a VPS/RDP.
+
 ```bash
 bun install
 ```
 
-**1. Start the server:**
+**Host machine — start the one server:**
 
 ```bash
 bun run server
-# 🎨  Skribbl-TUI server listening on ws://localhost:3017
+# 🎨  tui-draw server listening on ws://localhost:3017
 ```
 
-**2. Start one client per player** (each in its own terminal window):
+**Every player — just run the client** (it connects to the fixed server):
 
 ```bash
-bun run client Alice
-bun run client Bob
+tui-draw            # or: bun run cli
+tui-draw Alice      # with a display name
 ```
 
-The first player to join is the **host**. Once a second player joins, the host
-presses **`S`** to start the game — turns do not begin automatically.
+Players pick or create a room in the lobby. The first player to join a room is
+its **host**; once a second player joins, the host presses **`S`** to start —
+turns do not begin automatically. Share the 6‑char room code (press `Ctrl+Y` to
+copy it) so friends can join the same room.
+
+> The CLI is a pure client — there are no `join`/`create`/`list`/`server`
+> subcommands; everything happens in the lobby. The `SERVER` env var still
+> overrides the fixed address for the host's own local testing.
 
 ---
 
@@ -63,13 +74,11 @@ presses **`S`** to start the game — turns do not begin automatically.
 docker-compose up -d
 ```
 
-The server starts on port `3017`. Players connect by pointing the client at your server:
+The server starts on port `3017`. Set `DEFAULT_SERVER_URL` in
+`src/types/index.ts` to this server's public address (e.g.
+`ws://YOUR_SERVER_IP:3017`) so every client connects to it automatically.
 
-```bash
-SERVER=ws://YOUR_SERVER_IP:3017 bun run client Alice
-```
-
-### Manual (VPS)
+### Manual (VPS / RDP)
 
 ```bash
 # On the server
@@ -79,7 +88,9 @@ bun install
 bun run server
 ```
 
-Open port `3017` in your firewall (`ufw allow 3017`).
+Open port `3017` in your firewall (`ufw allow 3017`) **and** in your provider's
+network firewall / security group. On a Windows RDP, install Bun for Windows,
+`bun run server`, and allow TCP 3017 (`New-NetFirewallRule … -LocalPort 3017`).
 
 ### Cloud (Railway, Render, Fly.io)
 
@@ -89,11 +100,11 @@ All support Docker — point them at the `Dockerfile` and set `PORT=3017`.
 
 ## Configuration
 
-| Env var  | Default                | Description                                          |
-| -------- | ---------------------- | ---------------------------------------------------- |
-| `PORT`   | `3017`                 | Server listen port / client connect port             |
-| `SERVER` | `ws://localhost:$PORT` | Full WebSocket URL the client connects to            |
-| `NAME`   | `Artist-####`          | Display name (also: `bun run client <name>`)         |
+| Env var  | Default                       | Description                                                 |
+| -------- | ----------------------------- | ----------------------------------------------------------- |
+| `PORT`   | `3017`                        | Server listen port                                          |
+| `SERVER` | `DEFAULT_SERVER_URL`          | Override the fixed client target (host-side testing only)   |
+| `NAME`   | `Artist-####`                 | Display name (also: `tui-draw <name>`)                      |
 
 ---
 
