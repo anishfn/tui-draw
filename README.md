@@ -1,0 +1,177 @@
+# Skribbl-TUI
+
+A real-time, multiplayer **drawing & guessing game** that runs entirely in your
+terminal — think *Skribbl.io*, but rendered with a blazing-fast native Zig
+layout engine instead of a browser.
+
+Built with **[Bun](https://bun.sh)** + **[@opentui/core](https://github.com/anomalyco/opentui)**:
+pure TypeScript, a native `Bun.serve` WebSocket backend, and a Flexbox-driven
+TUI. No Ink, no DOM wrappers, no Electron.
+
+```
+ ╭──────────────── Canvas ────────────────╮ ╭────────── Skribbl-TUI ──────────╮
+ │ R3  ⏱ 62s   ✎ YOU DRAW   volcano        │ │ ╭─ Players ───────────────────╮ │
+ │   ⢀⣀⠤⠤⠒⠒⠉⠉⠉⠒⠒⠤⠤⣀⡀                       │ │ │ ✎ Alice (you)  120          │ │
+ │  ⡰⠁              ⠈⠢⡀                     │ │ │   Bob ✓  99                 │ │
+ │  ⠇                 ⠘⡄                    │ │ ╰─────────────────────────────╯ │
+ │  ⠘⢄              ⢀⠔⠁                     │ │ ╭─ Chat ──────────────────────╮ │
+ │     ⠉⠒⠤⠤⣀⣀⣀⠤⠤⠒⠊⠉                        │ │ │ • Bob guessed the word!     │ │
+ │                                         │ │ │ Bob: is it a mountain?      │ │
+ │ Tab: focus chat · b: braille/block …    │ │ ╰─ Guess ─────────────────────╯ │
+ ╰─────────────────────────────────────────╯ ╰─────────────────────────────────╯
+```
+
+---
+
+## Requirements
+
+- **[Bun](https://bun.sh) ≥ 1.1**
+- A terminal emulator that supports mouse events (most modern ones do)
+
+---
+
+## Quick Start
+
+```bash
+bun install
+```
+
+**1. Start the server:**
+
+```bash
+bun run server
+# 🎨  Skribbl-TUI server listening on ws://localhost:3017
+```
+
+**2. Start one client per player** (each in its own terminal window):
+
+```bash
+bun run client Alice
+bun run client Bob
+```
+
+The first player to join becomes the drawer and a new turn begins automatically.
+
+---
+
+## Hosting
+
+### Docker
+
+```bash
+docker-compose up -d
+```
+
+The server starts on port `3017`. Players connect by pointing the client at your server:
+
+```bash
+SERVER=ws://YOUR_SERVER_IP:3017 bun run client Alice
+```
+
+### Manual (VPS)
+
+```bash
+# On the server
+curl -fsSL https://bun.sh/install | bash
+git clone https://github.com/anishfn/tui-draw && cd tui-draw
+bun install
+bun run server
+```
+
+Open port `3017` in your firewall (`ufw allow 3017`).
+
+### Cloud (Railway, Render, Fly.io)
+
+All support Docker — point them at the `Dockerfile` and set `PORT=3017`.
+
+---
+
+## Configuration
+
+| Env var  | Default                | Description                                          |
+| -------- | ---------------------- | ---------------------------------------------------- |
+| `PORT`   | `3017`                 | Server listen port / client connect port             |
+| `SERVER` | `ws://localhost:$PORT` | Full WebSocket URL the client connects to            |
+| `NAME`   | `Artist-####`          | Display name (also: `bun run client <name>`)         |
+
+---
+
+## How to Play
+
+- The **drawer** sees the secret word and paints it on the canvas with the mouse.
+  Everyone else sees a masked hint like `_ A _ _ E R` and races to type the answer.
+- **Guess** by typing in the chat box and pressing Enter. Correct guesses are
+  hidden from other players. Faster guesses earn more points; the drawer scores
+  for every correct guess.
+- A turn ends when everyone guesses or the timer runs out, then the pen rotates.
+
+### Controls
+
+| Key                           | Action                                               |
+| ----------------------------- | ---------------------------------------------------- |
+| **Mouse drag**                | Paint on the canvas (drawer only)                    |
+| Tab                           | Toggle focus between chat input and command mode     |
+| `b`                           | Toggle braille (fine) vs block (`█`) brush†          |
+| `e`                           | Toggle the eraser†                                   |
+| `[` / `]`                     | Decrease / increase brush size†                      |
+| `1`–`8`                       | Pick a pen color†                                    |
+| `c`                           | Clear the board (drawer only)†                       |
+| Ctrl+C                        | Quit cleanly (restores your terminal)                |
+
+† These keys only fire while the chat input is **unfocused** (press Tab first).
+
+---
+
+## Architecture
+
+```
+src/
+├── types/index.ts          # Shared discriminated-union socket protocol
+├── server/
+│   ├── index.ts            # Bun.serve WebSocket room broker
+│   ├── gameLoop.ts         # Authoritative timer, scoring & word evaluation
+│   ├── room.ts             # Per-room state machine
+│   └── registry.ts         # Room registry / player routing
+└── client/
+    ├── index.ts            # Entry point, WebSocket hookup, key bindings
+    ├── state.ts            # Observable local mirror of server state
+    └── ui/
+        ├── dashboard.ts    # Master Flexbox layout shell
+        ├── canvas.ts       # Braille / block sub-pixel paint handler
+        ├── sidebar.ts      # Player list, chat feed & guess input
+        └── roomLobby.ts    # Pre-game lobby screen
+```
+
+### Design Principles
+
+- **Server is authoritative.** Clients hold a dumb, observable mirror and can
+  never disagree about scores, the timer, or whose turn it is. Game rules live
+  exclusively in `gameLoop.ts`, which is fully transport-agnostic.
+- **One typed protocol, both ends.** Every frame on the wire is a member of the
+  `Packet` discriminated union in `src/types`. Add a packet kind and the compiler
+  flags every handler that forgot it.
+- **Sub-pixel drawing.** Each terminal cell encodes a 2×4 braille dot grid
+  (`U+2800`–`U+28FF`), giving an effective resolution of *(2·cols) × (4·rows)*
+  dots. Mouse drags are Bresenham-interpolated and stamped with a filled disc
+  brush for solid, continuous strokes.
+- **No app theme.** The UI inherits your terminal's palette — no background or
+  border colors are set. The only colors on screen are the drawer's chosen ink.
+- **Clean teardown.** On any shutdown signal the client calls `renderer.destroy()`,
+  restoring the alternate screen, cursor, and raw mouse-capture modes.
+
+### Wire Protocol
+
+| Packet         | Direction        | Payload                                                              |
+| -------------- | ---------------- | -------------------------------------------------------------------- |
+| `JOIN`         | client → server  | `{ name }`                                                           |
+| `DRAW_POINT`   | drawer ↔ lobby   | `{ x, y, color, mode, drag }`                                        |
+| `CHAT_MESSAGE` | client ↔ lobby   | `{ sender, content }` (evaluated as a guess)                         |
+| `SYSTEM_ALERT` | server → clients | `{ kind, text }`                                                     |
+| `CLEAR_BOARD`  | drawer ↔ lobby   | *(none)*                                                             |
+| `STATE_SYNC`   | server → client  | Full `GameSnapshot` (drawer's frame carries the real word; others get the hint) |
+
+---
+
+## License
+
+MIT

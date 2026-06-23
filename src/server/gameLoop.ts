@@ -1,0 +1,395 @@
+/**
+ * src/server/gameLoop.ts
+ * --------------------------------------------------------------------------
+ * Authoritative timer, score, and word-evaluation state machine.
+ *
+ * The game loop owns the *truth*: whose turn it is, what the secret word is,
+ * how much time is left, and who has scored. It knows nothing about sockets or
+ * the terminal — it simply mutates internal state on a 1-second tick and hands
+ * the broker a fresh snapshot to broadcast through an injected callback.
+ *
+ * Keeping the loop transport-agnostic (Phase: "explicit separation of core
+ * runtime loops from UI component structures") makes it trivially testable and
+ * impossible to corrupt from a malformed packet.
+ * --------------------------------------------------------------------------
+ */
+
+import type {
+  Color,
+  DrawPointPayload,
+  GamePhase,
+  GameSnapshot,
+  Player,
+  SystemAlertPayload,
+} from "../types/index.ts";
+
+const AVATARS: readonly string[] = [
+  "🐱", "🐶", "🦊", "🐻", "🐼", "🐨", "🐯", "🦁",
+  "🐮", "🐷", "🐸", "🐙", "🦋", "🐧", "🦅", "🦉",
+  "🐺", "🦄", "🐲", "🦖",
+];
+
+const PLAYER_COLORS: readonly Color[] = [
+  "#89b4fa", "#a6e3a1", "#fab387", "#f38ba8",
+  "#cba6f7", "#89dceb", "#f9e2af", "#94e2d5",
+] as Color[];
+
+/** A modest word bank — easily extended. */
+const WORDS: readonly string[] = [
+  "answer", "rocket", "guitar", "penguin", "volcano", "diamond", "castle",
+  "rainbow", "octopus", "anchor", "bicycle", "dragon", "pirate", "compass",
+  "lantern", "cactus", "tornado", "pyramid", "harbor", "wizard",
+];
+
+/** How long each drawing turn lasts, in seconds. */
+const TURN_SECONDS = 80;
+/** Pause between turns so players can read the scoreboard. */
+const INTERMISSION_SECONDS = 5;
+/** Points awarded to the drawer each time someone guesses correctly. */
+const DRAWER_REWARD = 25;
+
+/**
+ * The internal player record. Mirrors the public {@link Player} but also tracks
+ * the live socket-side handle id and per-turn bookkeeping.
+ */
+export interface ServerPlayer extends Player {}
+
+/** Side-effecting hooks the broker wires into the loop. */
+export interface GameLoopHooks {
+  /** Push the latest authoritative snapshot to everyone (drawer gets the word). */
+  broadcastSnapshot: () => void;
+  /** Emit a system alert to the whole lobby. */
+  broadcastAlert: (alert: SystemAlertPayload) => void;
+  /** Order every client to wipe its canvas. */
+  broadcastClear: () => void;
+}
+
+export class GameLoop {
+  private players = new Map<string, ServerPlayer>();
+  /** Ordered ids defining drawer rotation. */
+  private rotation: string[] = [];
+  private phase: GamePhase = "lobby";
+  private drawerId: string | null = null;
+  private word: string | null = null;
+  private timeLeft = 0;
+  private round = 0;
+  /** Replay buffer for the current turn's strokes. */
+  private history: DrawPointPayload[] = [];
+  /** Index into {@link rotation} for the next drawer. */
+  private rotationCursor = 0;
+  private ticker: ReturnType<typeof setInterval> | null = null;
+  private usedAvatars = new Set<string>();
+  private colorCursor = 0;
+
+  constructor(private readonly hooks: GameLoopHooks) {}
+
+  /* ----------------------------------------------------------------------- */
+  /* Lifecycle                                                               */
+  /* ----------------------------------------------------------------------- */
+
+  /** Begin the 1Hz authoritative tick. Idempotent. */
+  start(): void {
+    if (this.ticker) return;
+    this.ticker = setInterval(() => this.tick(), 1000);
+  }
+
+  /** Stop the tick and release the timer (used on shutdown / tests). */
+  stop(): void {
+    if (this.ticker) {
+      clearInterval(this.ticker);
+      this.ticker = null;
+    }
+  }
+
+  /* ----------------------------------------------------------------------- */
+  /* Membership                                                              */
+  /* ----------------------------------------------------------------------- */
+
+  addPlayer(id: string, name: string): ServerPlayer {
+    const player: ServerPlayer = {
+      id,
+      name,
+      score: 0,
+      isDrawing: false,
+      hasGuessed: false,
+      avatar: this.pickAvatar(),
+      color: this.pickColor(),
+    };
+    this.players.set(id, player);
+    this.rotation.push(id);
+
+    // If we were idling in the lobby and now have enough players, kick off.
+    if (this.phase === "lobby" && this.players.size >= 1) {
+      this.beginTurn();
+    } else {
+      this.hooks.broadcastSnapshot();
+    }
+    return player;
+  }
+
+  removePlayer(id: string): void {
+    const wasDrawer = this.drawerId === id;
+    const leaving = this.players.get(id);
+    if (leaving) this.usedAvatars.delete(leaving.avatar);
+    this.players.delete(id);
+    this.rotation = this.rotation.filter((p) => p !== id);
+    if (this.rotationCursor > this.rotation.length) this.rotationCursor = 0;
+
+    if (this.players.size === 0) {
+      this.gotoLobby();
+      return;
+    }
+    // If the drawer dropped, the turn cannot continue — move on immediately.
+    if (wasDrawer && this.phase === "drawing") {
+      this.hooks.broadcastAlert({
+        kind: "info",
+        text: "The drawer left — starting a new turn.",
+      });
+      this.beginIntermission();
+    } else {
+      this.hooks.broadcastSnapshot();
+    }
+  }
+
+  /** Whether the given player currently holds the pen. */
+  isDrawer(id: string): boolean {
+    return this.drawerId === id;
+  }
+
+  /** Current game phase (for room info snapshots). */
+  getPhase(): GamePhase {
+    return this.phase;
+  }
+
+  /* ----------------------------------------------------------------------- */
+  /* Drawing history                                                         */
+  /* ----------------------------------------------------------------------- */
+
+  /** Record a stroke sample for replay to late joiners. */
+  recordPoint(point: DrawPointPayload): void {
+    // Cap the buffer so a long turn can't grow unbounded.
+    if (this.history.length < 20000) this.history.push(point);
+  }
+
+  clearHistory(): void {
+    this.history = [];
+  }
+
+  /* ----------------------------------------------------------------------- */
+  /* Guess evaluation                                                        */
+  /* ----------------------------------------------------------------------- */
+
+  /**
+   * Evaluate a chat message as a potential guess.
+   *
+   * @returns `"correct"` if it matched the word (caller should suppress the raw
+   *          chat so the answer isn't leaked), `"close"` if it's one edit away,
+   *          or `"miss"` for an ordinary chat line that should be relayed.
+   */
+  evaluateGuess(playerId: string, content: string): "correct" | "close" | "miss" {
+    const player = this.players.get(playerId);
+    if (
+      !player ||
+      this.phase !== "drawing" ||
+      this.word === null ||
+      player.isDrawing ||
+      player.hasGuessed
+    ) {
+      return "miss";
+    }
+
+    const guess = content.trim().toLowerCase();
+    if (guess.length === 0) return "miss";
+
+    if (guess === this.word) {
+      // Score scales with how much time is left — faster guesses score more.
+      const reward = Math.max(10, Math.round((this.timeLeft / TURN_SECONDS) * 100));
+      player.score += reward;
+      player.hasGuessed = true;
+
+      const drawer = this.drawerId ? this.players.get(this.drawerId) : undefined;
+      if (drawer) drawer.score += DRAWER_REWARD;
+
+      this.hooks.broadcastAlert({
+        kind: "correct",
+        text: `${player.name} guessed the word! (+${reward})`,
+      });
+      this.hooks.broadcastSnapshot();
+
+      // If everyone (besides the drawer) has guessed, end the turn early.
+      if (this.allGuessed()) {
+        this.hooks.broadcastAlert({ kind: "round", text: "Everyone guessed it!" });
+        this.beginIntermission();
+      }
+      return "correct";
+    }
+
+    if (this.isOneEditAway(guess, this.word)) return "close";
+    return "miss";
+  }
+
+  /* ----------------------------------------------------------------------- */
+  /* Snapshot                                                                */
+  /* ----------------------------------------------------------------------- */
+
+  /**
+   * Build a snapshot. When `forId` is the current drawer, the real word is
+   * included; everyone else receives only the masked hint.
+   */
+  snapshotFor(forId: string | null): GameSnapshot {
+    return {
+      phase: this.phase,
+      players: [...this.players.values()].map((p) => ({ ...p })),
+      drawerId: this.drawerId,
+      hint: this.maskedHint(),
+      word: this.phase === "drawing" && forId !== null && forId === this.drawerId ? this.word : null,
+      timeLeft: this.timeLeft,
+      round: this.round,
+      history: this.history,
+    };
+  }
+
+  /* ----------------------------------------------------------------------- */
+  /* Internal: turn machine                                                  */
+  /* ----------------------------------------------------------------------- */
+
+  private tick(): void {
+    if (this.phase === "drawing") {
+      this.timeLeft -= 1;
+      if (this.timeLeft <= 0) {
+        this.hooks.broadcastAlert({
+          kind: "round",
+          text: `Time's up! The word was "${this.word}".`,
+        });
+        this.beginIntermission();
+        return;
+      }
+      // Periodic countdown + progressively reveal a letter near the end.
+      if (this.timeLeft <= 10 || this.timeLeft % 15 === 0) {
+        this.hooks.broadcastAlert({ kind: "tick", text: `${this.timeLeft}s left` });
+      }
+      this.hooks.broadcastSnapshot();
+    } else if (this.phase === "intermission") {
+      this.timeLeft -= 1;
+      if (this.timeLeft <= 0) this.beginTurn();
+      else this.hooks.broadcastSnapshot();
+    }
+  }
+
+  private beginTurn(): void {
+    if (this.players.size === 0) {
+      this.gotoLobby();
+      return;
+    }
+
+    // Reset per-turn flags.
+    for (const p of this.players.values()) {
+      p.hasGuessed = false;
+      p.isDrawing = false;
+    }
+
+    // Pick the next drawer from the rotation.
+    if (this.rotationCursor >= this.rotation.length) {
+      this.rotationCursor = 0;
+      this.round += 1;
+    }
+    if (this.round === 0) this.round = 1;
+
+    const drawerId = this.rotation[this.rotationCursor] ?? this.rotation[0]!;
+    this.rotationCursor += 1;
+    this.drawerId = drawerId;
+
+    const drawer = this.players.get(drawerId);
+    if (drawer) drawer.isDrawing = true;
+
+    this.word = WORDS[Math.floor(Math.random() * WORDS.length)] ?? "answer";
+    this.timeLeft = TURN_SECONDS;
+    this.phase = "drawing";
+    this.clearHistory();
+    this.hooks.broadcastClear();
+
+    this.hooks.broadcastAlert({
+      kind: "role",
+      text: `${drawer?.name ?? "Someone"} is drawing — start guessing!`,
+    });
+    this.hooks.broadcastSnapshot();
+  }
+
+  private beginIntermission(): void {
+    this.phase = "intermission";
+    this.timeLeft = INTERMISSION_SECONDS;
+    if (this.drawerId) {
+      const drawer = this.players.get(this.drawerId);
+      if (drawer) drawer.isDrawing = false;
+    }
+    this.hooks.broadcastSnapshot();
+  }
+
+  private gotoLobby(): void {
+    this.phase = "lobby";
+    this.drawerId = null;
+    this.word = null;
+    this.timeLeft = 0;
+    this.clearHistory();
+    this.hooks.broadcastSnapshot();
+  }
+
+  /** True once every non-drawer has guessed correctly. */
+  private allGuessed(): boolean {
+    const guessers = [...this.players.values()].filter((p) => !p.isDrawing);
+    return guessers.length > 0 && guessers.every((p) => p.hasGuessed);
+  }
+
+  private pickAvatar(): string {
+    for (const a of AVATARS) {
+      if (!this.usedAvatars.has(a)) {
+        this.usedAvatars.add(a);
+        return a;
+      }
+    }
+    return AVATARS[Math.floor(Math.random() * AVATARS.length)] ?? "🎭";
+  }
+
+  private pickColor(): Color {
+    const idx = this.colorCursor % PLAYER_COLORS.length;
+    this.colorCursor++;
+    return PLAYER_COLORS[idx] ?? ("#ffffff" as Color);
+  }
+
+  /** Produce the spaced, masked hint shown to guessers, e.g. "_ A _ _ E R". */
+  private maskedHint(): string {
+    if (!this.word || this.phase !== "drawing") return "";
+    return this.word
+      .split("")
+      .map((ch) => (ch === " " ? " " : "_"))
+      .join(" ");
+  }
+
+  /** Cheap Levenshtein-≤1 check used to nudge "so close" guesses. */
+  private isOneEditAway(a: string, b: string): boolean {
+    if (a === b) return true;
+    const la = a.length;
+    const lb = b.length;
+    if (Math.abs(la - lb) > 1) return false;
+
+    let i = 0;
+    let j = 0;
+    let edits = 0;
+    while (i < la && j < lb) {
+      if (a[i] === b[j]) {
+        i++;
+        j++;
+        continue;
+      }
+      if (++edits > 1) return false;
+      if (la > lb) i++;
+      else if (lb > la) j++;
+      else {
+        i++;
+        j++;
+      }
+    }
+    if (i < la || j < lb) edits++;
+    return edits <= 1;
+  }
+}
