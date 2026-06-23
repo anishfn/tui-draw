@@ -1,0 +1,8 @@
+services:
+  server:
+    build: .
+    ports:
+      - "${PORT:-3017}:3017"
+    environment:
+      PORT: "3017"
+    restart: unless-stopped
