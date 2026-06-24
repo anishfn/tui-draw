@@ -1,13 +1,35 @@
 {
-  "name": "tui-draw",
-  "version": "1.0.0",
+  "name": "@anishfn/tui-draw",
+  "version": "1.0.1",
   "description": "A real-time multiplayer drawing & guessing game that runs entirely in the terminal, powered by Bun + @opentui/core.",
   "type": "module",
-  "private": true,
   "bin": {
-    "tui-draw": "./src/cli.ts"
+    "tui-draw": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "tui",
+    "terminal",
+    "game",
+    "multiplayer",
+    "drawing",
+    "skribbl",
+    "bun",
+    "opentui"
+  ],
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
+    "build": "bun run scripts/build.ts",
+    "prepublishOnly": "bun run build",
     "server": "bun run src/server/index.ts",
     "client": "bun run src/client/index.ts",
     "cli": "bun run src/cli.ts"
@@ -17,8 +39,5 @@
   },
   "devDependencies": {
     "@types/bun": "latest"
-  },
-  "peerDependencies": {
-    "typescript": "^5"
   }
 }
