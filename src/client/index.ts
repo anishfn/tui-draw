@@ -400,5 +400,5 @@ if (import.meta.main) {
   startClient({
     name: process.argv[2],
     serverUrl: process.env.SERVER,
-  }).catch((err) => console.error("Fatal: failed to start tui-draw client:", err));
+  }).catch((err) => console.error("Fatal: failed to start drawtui client:", err));
 }

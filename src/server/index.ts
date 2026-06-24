@@ -208,7 +208,7 @@ export async function startServer(port: number = DEFAULT_PORT): Promise<void> {
         data: { id: genId(), name: "", avatar: "", joined: false, roomId: null },
       });
       if (ok) return undefined;
-      return new Response("tui-draw server. Connect a WebSocket client to play.", {
+      return new Response("drawtui server. Connect a WebSocket client to play.", {
         status: 426,
         headers: { "Content-Type": "text/plain" },
       });
@@ -244,7 +244,7 @@ export async function startServer(port: number = DEFAULT_PORT): Promise<void> {
     },
   });
 
-  console.log(`tui-draw server listening on ws://localhost:${server.port}`);
+  console.log(`drawtui server listening on ws://localhost:${server.port}`);
 
   await new Promise<void>((resolve) => {
     const shutdown = () => {

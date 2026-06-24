@@ -44,7 +44,7 @@ export function createRoomLobby(
   });
 
   const header = new TextRenderable(renderer, {
-    content: "tui-draw  —  pick a room or create one",
+    content: "drawtui  —  pick a room or create one",
     flexShrink: 0,
     paddingLeft: 1,
   });

@@ -3,21 +3,21 @@ import { startClient } from "./client/index.ts";
 import { DEFAULT_SERVER_URL } from "./types/index.ts";
 
 /* -------------------------------------------------------------------------- */
-/* tui-draw — single-server client                                            */
+/* drawtui — single-server client                                            */
 /* --------------------------------------------------------------------------
  * There is one fixed server (see DEFAULT_SERVER_URL in src/types/index.ts).
- * Running `tui-draw` just connects to it and opens the room lobby, where you
+ * Running `drawtui` just connects to it and opens the room lobby, where you
  * create or join a room from inside the TUI. There are intentionally no other
  * subcommands — the client cannot point at a different server (aside from the
  * SERVER env override, used by the host for local testing).
  * -------------------------------------------------------------------------- */
 
 const HELP = `\
-tui-draw — collaborative drawing in your terminal
+drawtui — collaborative drawing in your terminal
 
 USAGE
-  tui-draw [name]
-  tui-draw -n <name>
+  drawtui [name]
+  drawtui -n <name>
 
 OPTIONS
   -n, --name <name>   Your display name (otherwise a random one is assigned)
