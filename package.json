@@ -4,14 +4,15 @@
   "description": "A real-time multiplayer drawing & guessing game that runs entirely in the terminal, powered by Bun + @opentui/core.",
   "type": "module",
   "bin": {
-    "tui-draw": "./src/cli.ts"
+    "tui-draw": "./dist/cli.js"
   },
   "files": [
+    "dist",
     "src",
     "README.md"
   ],
   "engines": {
-    "bun": ">=1.1"
+    "node": ">=18"
   },
   "keywords": [
     "tui",
@@ -27,6 +28,8 @@
     "access": "public"
   },
   "scripts": {
+    "build": "bun run scripts/build.ts",
+    "prepublishOnly": "bun run build",
     "server": "bun run src/server/index.ts",
     "client": "bun run src/client/index.ts",
     "cli": "bun run src/cli.ts"
@@ -36,8 +39,5 @@
   },
   "devDependencies": {
     "@types/bun": "latest"
-  },
-  "peerDependencies": {
-    "typescript": "^5"
   }
 }
