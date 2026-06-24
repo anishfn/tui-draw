@@ -262,4 +262,4 @@ export const DEFAULT_PORT = 3017;
  * host's own local testing), but normal users never need to touch it — running
  * `tui-draw` just connects here.
  */
-export const DEFAULT_SERVER_URL = "ws://YOUR-RDP-IP:3017";
+export const DEFAULT_SERVER_URL = "wss://tui-draw.up.railway.app";
