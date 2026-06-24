@@ -1,10 +1,10 @@
 {
-  "name": "@anishfn/tui-draw",
+  "name": "drawtui",
   "version": "1.0.2",
   "description": "A real-time multiplayer drawing & guessing game that runs entirely in the terminal, powered by Bun + @opentui/core.",
   "type": "module",
   "bin": {
-    "tui-draw": "./dist/cli.js"
+    "drawtui": "./dist/cli.js"
   },
   "files": [
     "dist",

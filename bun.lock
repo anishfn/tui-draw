@@ -3,15 +3,12 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "tui-draw",
+      "name": "drawtui",
       "dependencies": {
         "@opentui/core": "^0.4.1",
       },
       "devDependencies": {
         "@types/bun": "latest",
-      },
-      "peerDependencies": {
-        "typescript": "^5",
       },
     },
   },

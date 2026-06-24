@@ -1,29 +1,29 @@
-# tui-draw
+# drawtui
 
 A real-time multiplayer **drawing & guessing game** that runs entirely in your
 terminal — think *Skribbl.io*, rendered as a fast native TUI.
 
 ## Requirements
 
-- **[Node](https://nodejs.org) ≥ 18** or **[Bun](https://bun.sh) ≥ 1.1**
+- **[Bun](https://bun.sh) ≥ 1.1** — the terminal renderer uses Bun's native FFI,
+  so Bun must be installed even if you launch via npm/npx
 - A terminal that supports mouse events (most modern ones do)
 
 ## Usage
 
-Just run the client — it connects to the hosted game server automatically.
-Use whichever runtime you have:
+Just run the client — it connects to the hosted game server automatically. You
+can launch it from npm or Bun; either way it runs under Bun:
 
 ```bash
-npx @anishfn/tui-draw             # join with a random name (Node)
-npx @anishfn/tui-draw Alice       # join with a display name
-bunx @anishfn/tui-draw Alice      # same thing, via Bun
+bunx drawtui Alice   # via Bun
+npx drawtui Alice    # via npm — re-execs under Bun automatically
 ```
 
-Prefer a permanent `tui-draw` command? Install it globally:
+Prefer a permanent `drawtui` command? Install it globally:
 
 ```bash
-npm install -g @anishfn/tui-draw  # or: bun add -g @anishfn/tui-draw
-tui-draw Alice
+bun add -g drawtui   # or: npm install -g drawtui
+drawtui Alice
 ```
 
 ## How to play

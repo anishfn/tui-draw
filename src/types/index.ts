@@ -260,6 +260,6 @@ export const DEFAULT_PORT = 3017;
  *
  * The `SERVER` environment variable still overrides this if set (handy for the
  * host's own local testing), but normal users never need to touch it — running
- * `tui-draw` just connects here.
+ * `drawtui` just connects here.
  */
 export const DEFAULT_SERVER_URL = "wss://tui-draw.up.railway.app";

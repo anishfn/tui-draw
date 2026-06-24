@@ -47,7 +47,7 @@ export function createSidebar(
     flexDirection: "column",
     border: true,
     borderStyle: "rounded",
-    title: " tui-draw ",
+    title: " drawtui ",
     titleAlignment: "center",
     gap: 1,
     padding: 1,
