@@ -1,6 +1,6 @@
 {
   "name": "@anishfn/tui-draw",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "A real-time multiplayer drawing & guessing game that runs entirely in the terminal, powered by Bun + @opentui/core.",
   "type": "module",
   "bin": {
@@ -23,10 +23,6 @@
     "bun",
     "opentui"
   ],
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/anishfn/tui-draw.git"
-  },
   "publishConfig": {
     "access": "public"
   },
