@@ -5,22 +5,24 @@ terminal — think *Skribbl.io*, rendered as a fast native TUI.
 
 ## Requirements
 
-- **[Bun](https://bun.sh) ≥ 1.1**
+- **[Node](https://nodejs.org) ≥ 18** or **[Bun](https://bun.sh) ≥ 1.1**
 - A terminal that supports mouse events (most modern ones do)
 
 ## Usage
 
-Just run the client — it connects to the hosted game server automatically:
+Just run the client — it connects to the hosted game server automatically.
+Use whichever runtime you have:
 
 ```bash
-bunx @anishfn/tui-draw            # join with a random name
-bunx @anishfn/tui-draw Alice      # join with a display name
+npx @anishfn/tui-draw             # join with a random name (Node)
+npx @anishfn/tui-draw Alice       # join with a display name
+bunx @anishfn/tui-draw Alice      # same thing, via Bun
 ```
 
 Prefer a permanent `tui-draw` command? Install it globally:
 
 ```bash
-bun add -g @anishfn/tui-draw
+npm install -g @anishfn/tui-draw  # or: bun add -g @anishfn/tui-draw
 tui-draw Alice
 ```
 
