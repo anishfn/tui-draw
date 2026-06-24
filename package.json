@@ -3,9 +3,32 @@
   "version": "1.0.0",
   "description": "A real-time multiplayer drawing & guessing game that runs entirely in the terminal, powered by Bun + @opentui/core.",
   "type": "module",
-  "private": true,
   "bin": {
     "tui-draw": "./src/cli.ts"
+  },
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "engines": {
+    "bun": ">=1.1"
+  },
+  "keywords": [
+    "tui",
+    "terminal",
+    "game",
+    "multiplayer",
+    "drawing",
+    "skribbl",
+    "bun",
+    "opentui"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/anishfn/tui-draw.git"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "server": "bun run src/server/index.ts",
