@@ -68,33 +68,186 @@ copy it) so friends can join the same room.
 
 ## Hosting
 
-### Docker
+The model is simple: **one server runs somewhere reachable**, and every player
+runs the client, which connects to that one fixed address. Hosting is three
+steps, no matter the platform:
+
+1. **Point the client at your server.** Edit `DEFAULT_SERVER_URL` in
+   `src/types/index.ts` to your server's public IP or domain — out of the box it
+   ships as the placeholder `ws://YOUR-RDP-IP:3017`:
+
+   ```ts
+   export const DEFAULT_SERVER_URL = "ws://203.0.113.10:3017";
+   ```
+
+   Whatever you commit here is what your friends' clients will connect to, so do
+   this *before* you share the repo with them.
+2. **Run the server** on a machine with a public IP and the port open.
+3. **Share the client** — friends clone the repo (with your edited
+   `DEFAULT_SERVER_URL`), `bun install`, and run `tui-draw`. They never touch any
+   config.
+
+Pick one of the walkthroughs below for where the server runs.
+
+---
+
+### Option A — Linux VPS (DigitalOcean, Hetzner, AWS EC2, …)
+
+Step by step, from a fresh Ubuntu/Debian box:
 
 ```bash
-docker-compose up -d
-```
+# 1. SSH into the VPS
+ssh root@203.0.113.10        # ← your VPS public IP
 
-The server starts on port `3017`. Set `DEFAULT_SERVER_URL` in
-`src/types/index.ts` to this server's public address (e.g.
-`ws://YOUR_SERVER_IP:3017`) so every client connects to it automatically.
-
-### Manual (VPS / RDP)
-
-```bash
-# On the server
+# 2. Install Bun
 curl -fsSL https://bun.sh/install | bash
+source ~/.bashrc             # so `bun` is on PATH this session
+
+# 3. Get the code and install deps
 git clone https://github.com/anishfn/tui-draw && cd tui-draw
 bun install
+
+# 4. Set DEFAULT_SERVER_URL to THIS box's public IP (step 1 above),
+#    e.g. nano src/types/index.ts → ws://203.0.113.10:3017
+
+# 5. Open the port — BOTH the OS firewall and your provider's:
+ufw allow 3017/tcp           # OS-level firewall
+#   …and add an inbound rule for TCP 3017 in your cloud provider's
+#   Security Group / Network firewall (AWS, GCP, Azure, Oracle all have one).
+
+# 6. Smoke-test it in the foreground
 bun run server
+# → tui-draw server listening on ws://localhost:3017
 ```
 
-Open port `3017` in your firewall (`ufw allow 3017`) **and** in your provider's
-network firewall / security group. On a Windows RDP, install Bun for Windows,
-`bun run server`, and allow TCP 3017 (`New-NetFirewallRule … -LocalPort 3017`).
+**Keep it running after you log out.** The foreground process dies when your SSH
+session closes, so use one of these:
 
-### Cloud (Railway, Render, Fly.io)
+```bash
+# Quick & dirty
+nohup bun run server > server.log 2>&1 &
 
-All support Docker — point them at the `Dockerfile` and set `PORT=3017`.
+# …or in a tmux session you can re-attach to
+tmux new -s draw 'bun run server'   # detach with Ctrl-b d, reattach: tmux attach -t draw
+```
+
+**Recommended: a systemd service** that survives reboots and restarts on crash.
+Create `/etc/systemd/system/tui-draw.service`:
+
+```ini
+[Unit]
+Description=tui-draw game server
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/tui-draw
+ExecStart=/root/.bun/bin/bun run src/server/index.ts
+Environment=PORT=3017
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+systemctl daemon-reload
+systemctl enable --now tui-draw
+systemctl status tui-draw          # confirm it's "active (running)"
+journalctl -u tui-draw -f          # tail its logs
+```
+
+---
+
+### Option B — Windows RDP server
+
+If your "server" is a Windows box you reach over Remote Desktop:
+
+1. **Install Bun for Windows** — open PowerShell and run:
+
+   ```powershell
+   powershell -c "irm bun.sh/install.ps1 | iex"
+   ```
+
+   Close and reopen PowerShell so `bun` is on your PATH.
+
+2. **Get the code:**
+
+   ```powershell
+   git clone https://github.com/anishfn/tui-draw
+   cd tui-draw
+   bun install
+   ```
+
+3. **Set `DEFAULT_SERVER_URL`** in `src/types/index.ts` to the RDP box's
+   **public** IP (not the `10.x`/`192.168.x` LAN address RDP shows you — use
+   whatever `https://ifconfig.me` reports, or your provider's listed public IP),
+   e.g. `ws://203.0.113.10:3017`.
+
+4. **Allow the port through Windows Firewall** (run PowerShell *as
+   Administrator*):
+
+   ```powershell
+   New-NetFirewallRule -DisplayName "tui-draw 3017" -Direction Inbound `
+     -Protocol TCP -LocalPort 3017 -Action Allow
+   ```
+
+   If the box is behind a cloud provider, also open inbound TCP 3017 in its
+   network security group, exactly like the VPS case.
+
+5. **Run the server:**
+
+   ```powershell
+   bun run server
+   ```
+
+   To keep it running unattended, either leave the RDP session running, or
+   register it as a service with [NSSM](https://nssm.cc/) pointing at
+   `bun run src/server/index.ts`.
+
+---
+
+### Option C — Docker (anywhere Docker runs)
+
+```bash
+docker compose up -d           # builds the image, runs on port 3017, auto-restarts
+docker compose logs -f         # watch the logs
+```
+
+Still set `DEFAULT_SERVER_URL` in `src/types/index.ts` to the host's public
+address so clients find it. Override the published port with the `PORT` env var
+(`PORT=8080 docker compose up -d`).
+
+### Option D — Managed cloud (Railway, Render, Fly.io)
+
+All support Docker — point them at the included `Dockerfile` and set `PORT=3017`
+(or let them inject their own `PORT`; the server reads it). Set
+`DEFAULT_SERVER_URL` to the public hostname they give you. Most of these
+terminate TLS for you, so use the secure `wss://` scheme, e.g.
+`wss://tui-draw.up.railway.app`.
+
+---
+
+### Verify it's reachable
+
+From your **own laptop** (not the server), confirm the port is open before
+telling friends to join:
+
+```bash
+# Linux/macOS — should connect, not hang or refuse
+nc -vz 203.0.113.10 3017
+# or hit it with curl; the server answers HTTP 426 to non-WebSocket requests:
+curl -i http://203.0.113.10:3017
+# → HTTP/1.1 426 ... "tui-draw server. Connect a WebSocket client to play."
+```
+
+If that times out, the port isn't open — re-check **both** firewalls (OS and
+cloud security group). If it refuses instantly, the server isn't running.
+
+> **TLS / `wss://`:** raw `ws://` is fine for friends-only games. For anything
+> public, put the server behind a reverse proxy (Caddy/Nginx/Cloudflare) that
+> terminates HTTPS, and set `DEFAULT_SERVER_URL` to `wss://your-domain`.
 
 ---
 
