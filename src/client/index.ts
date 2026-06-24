@@ -57,21 +57,33 @@ export async function startClient(config: ClientConfig = {}): Promise<void> {
   let inputFocused = true;
   let autoActionFired = false;
 
-  const send = (packet: Packet): void => {
+  const send = (packet: Packet): boolean => {
     try {
-      if (ws && ws.readyState === WebSocket.OPEN) ws.send(encodePacket(packet));
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(encodePacket(packet));
+        return true;
+      }
     } catch { /* socket closing — drop */ }
+    return false;
   };
 
   /* --- UI ---------------------------------------------------------------- */
+  const NOT_CONNECTED = `Not connected to ${SERVER_URL} — is the server running and the address correct?`;
+
   const lobby = createRoomLobby(renderer, {
-    onCreateRoom: (name, password) => {
+    onCreateRoom: (name, password, isPrivate) => {
+      if (!send({ t: PacketType.CREATE_ROOM, name, password, isPrivate })) {
+        lobby.setError(NOT_CONNECTED);
+        return;
+      }
       lobby.clearError();
-      send({ t: PacketType.CREATE_ROOM, name, password });
     },
     onJoinRoom: (roomId, password) => {
+      if (!send({ t: PacketType.JOIN_ROOM, roomId, password })) {
+        lobby.setError(NOT_CONNECTED);
+        return;
+      }
       lobby.clearError();
-      send({ t: PacketType.JOIN_ROOM, roomId, password });
     },
   });
 
@@ -252,6 +264,7 @@ export async function startClient(config: ClientConfig = {}): Promise<void> {
     ws.addEventListener("open", () => {
       send({ t: PacketType.JOIN, name: MY_NAME });
       state.pushFeed({ kind: "system", text: `Connected to ${SERVER_URL} as ${MY_NAME}.`, color: "#9ccfd8" });
+      if (!state.inRoom) lobby.clearError();
       state.emitChange();
     });
     ws.addEventListener("message", (ev: MessageEvent) => {
@@ -275,6 +288,10 @@ export async function startClient(config: ClientConfig = {}): Promise<void> {
         text: `Could not reach ${SERVER_URL}. Is the server running?`,
         color: "#eb6f92",
       });
+      if (!state.inRoom) {
+        lobby.setError(NOT_CONNECTED);
+        renderer.requestRender();
+      }
       state.emitChange();
     });
   };
