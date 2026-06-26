@@ -159,6 +159,11 @@ export async function startClient(config: ClientConfig = {}): Promise<void> {
       } else {
         dash.hideScoreboard();
       }
+      if (state.phase === "selecting" && state.amChoosing) {
+        dash.showWordChoice(state.wordChoices, state.timeLeft);
+      } else {
+        dash.hideWordChoice();
+      }
     } else {
       lobby.setRooms(state.roomList);
     }

@@ -18,6 +18,7 @@
 
 import {
   BoxRenderable,
+  RGBA,
   StyledText,
   TextRenderable,
   bg,
@@ -67,6 +68,9 @@ export interface DashboardHandle {
   /** Show / hide the intermission scoreboard overlay. */
   showScoreboard(players: Player[], myName: string, reveal: string | null): void;
   hideScoreboard(): void;
+  /** Show / hide the centered word-picker dialog (drawer only). */
+  showWordChoice(choices: string[], timeLeft: number): void;
+  hideWordChoice(): void;
   /** Flash a transient banner over the canvas (e.g. a correct guess). */
   showToast(text: string, color?: string): void;
   hideToast(): void;
@@ -129,7 +133,7 @@ export function createDashboard(
   leftPane.add(toolBar);
 
   /* --- Overlays (absolute, float over the canvas) ---------------------- */
-  function makeOverlay(zIndex: number): { layer: BoxRenderable; box: BoxRenderable } {
+  function makeOverlay(zIndex: number, accent: string): { layer: BoxRenderable; box: BoxRenderable } {
     const layer = new BoxRenderable(renderer, {
       position: "absolute",
       top: 0,
@@ -144,34 +148,39 @@ export function createDashboard(
     const box = new BoxRenderable(renderer, {
       border: true,
       borderStyle: "rounded",
-      borderColor: C.accent,
-      backgroundColor: "#1e1e2e",
-      padding: 1,
+      borderColor: accent,
+      titleColor: RGBA.fromHex(accent),
+      backgroundColor: "#181825",
+      paddingTop: 1,
+      paddingBottom: 1,
+      paddingLeft: 3,
+      paddingRight: 3,
       flexDirection: "column",
+      titleAlignment: "center",
     });
     layer.add(box);
     leftPane.add(layer);
     return { layer, box };
   }
 
-  const score = makeOverlay(10);
-  score.box.title = " Scoreboard ";
-  score.box.titleAlignment = "center";
+  const score = makeOverlay(10, C.warn);
+  score.box.title = " * Scoreboard * ";
   const scoreText = new TextRenderable(renderer, { content: "" });
   score.box.add(scoreText);
 
-  const toast = makeOverlay(20);
+  const wordPick = makeOverlay(15, C.accent);
+  wordPick.box.title = " Your turn to draw ";
+  const wordText = new TextRenderable(renderer, { content: "" });
+  wordPick.box.add(wordText);
+
+  const toast = makeOverlay(20, C.good);
   toast.layer.justifyContent = "flex-start";
-  toast.box.borderColor = C.good;
   const toastText = new TextRenderable(renderer, { content: "" });
   toast.box.add(toastText);
 
-  const help = makeOverlay(30);
+  const help = makeOverlay(30, C.accent);
   help.box.title = " Controls ";
-  help.box.titleAlignment = "center";
-  const helpText = new TextRenderable(renderer, {
-    content: t`${fg(C.text)(HELP_BODY())}`,
-  });
+  const helpText = new TextRenderable(renderer, { content: buildHelp() });
   help.box.add(helpText);
 
   /* --- Right: sidebar -------------------------------------------------- */
@@ -256,14 +265,9 @@ export function createDashboard(
       }
 
       if (phase === "selecting") {
-        if (choosing) {
-          const choices = s.wordChoices.length
-            ? s.wordChoices.map((w, i) => `[${i + 1}] ${w}`).join("   ")
-            : "...";
-          statusBar.content = t`${fg(C.warn)("Choose a word:")}   ${choices}`;
-        } else {
-          statusBar.content = `${s.drawerName || "Someone"} is choosing a word...`;
-        }
+        statusBar.content = choosing
+          ? t`${fg(C.warn)("Pick a word")} to start drawing...`
+          : t`${fg(C.info)(s.drawerName || "Someone")} is choosing a word...`;
         return;
       }
 
@@ -302,6 +306,25 @@ export function createDashboard(
     },
     hideScoreboard() {
       score.layer.visible = false;
+      renderer.requestRender();
+    },
+
+    showWordChoice(choices, timeLeft) {
+      const lines: StyledText[] = [];
+      lines.push(t`${fg(C.text)("Choose a word to draw:")}`);
+      lines.push(stringToStyledText(""));
+      (choices.length ? choices : ["..."]).forEach((w, i) => {
+        lines.push(t`   ${fg(C.accent)(`[${i + 1}]`)}  ${fg(C.warn)(w)}`);
+      });
+      lines.push(stringToStyledText(""));
+      const frac = timeLeft / 15;
+      lines.push(t`   ${fg(C.muted)("press 1-3")}        ${fg(barColor(frac))(timeLeft + "s")}`);
+      wordText.content = joinLines(lines);
+      wordPick.layer.visible = true;
+      renderer.requestRender();
+    },
+    hideWordChoice() {
+      wordPick.layer.visible = false;
       renderer.requestRender();
     },
 
@@ -347,19 +370,31 @@ function joinLines(lines: StyledText[]): StyledText {
   return new StyledText(chunks);
 }
 
-function HELP_BODY(): string {
-  return [
-    "Drawing",
-    "  b brush     n line      m rect",
-    "  v circle    f fill      e eraser",
-    "  [ ] size    1-8 color",
-    "  z undo      Z redo      c clear",
-    "  g toggle braille/block",
-    "",
-    "Game",
-    "  S start     1-3 pick word",
-    "  Tab focus chat   Enter send guess",
-    "  Ctrl+Y copy room code",
-    "  ? help      Esc leave   Ctrl+C quit",
-  ].join("\n");
+/** A styled "key — action" row; the key gets the accent color. */
+function keyRow(pairs: [string, string][]): StyledText {
+  const chunks: TextChunk[] = [];
+  pairs.forEach(([key, label], i) => {
+    if (i > 0) chunks.push(...stringToStyledText("   ").chunks);
+    chunks.push(...t`${fg(C.accent)(key.padEnd(3))} ${fg(C.text)(label.padEnd(9))}`.chunks);
+  });
+  return new StyledText(chunks);
+}
+
+function buildHelp(): StyledText {
+  const lines: StyledText[] = [
+    t`${fg(C.warn)("Drawing")}`,
+    keyRow([["b", "brush"], ["n", "line"], ["m", "rect"]]),
+    keyRow([["v", "circle"], ["f", "fill"], ["e", "eraser"]]),
+    keyRow([["z", "undo"], ["Z", "redo"], ["c", "clear"]]),
+    keyRow([["[ ]", "size"], ["1-8", "color"], ["g", "braille"]]),
+    stringToStyledText(""),
+    t`${fg(C.warn)("Game")}`,
+    keyRow([["S", "start"], ["1-3", "pick word"]]),
+    keyRow([["Tab", "chat"], ["Ent", "send"]]),
+    keyRow([["^Y", "copy code"], ["?", "help"]]),
+    keyRow([["Esc", "leave"], ["^C", "quit"]]),
+    stringToStyledText(""),
+    t`${fg(C.muted)("press any key to close")}`,
+  ];
+  return joinLines(lines);
 }
