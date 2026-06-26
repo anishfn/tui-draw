@@ -196,7 +196,7 @@ export function createDashboard(
   const fitCanvas = (): void => {
     // Responsive sidebar: shrink it on narrow terminals so the canvas survives.
     const total = root.width;
-    const sbW = total < 60 ? 24 : total < 90 ? 30 : 35;
+    const sbW = total < 60 ? 28 : total < 90 ? 36 : 44;
     if (sidebar.container.width !== sbW) sidebar.container.width = sbW;
 
     const w = leftPane.width - 2; // minus left/right border

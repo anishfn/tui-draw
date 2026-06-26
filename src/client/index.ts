@@ -341,7 +341,7 @@ export async function startClient(config: ClientConfig = {}): Promise<void> {
     ws.addEventListener("open", () => {
       dash.sidebar.setConnection("online");
       send({ t: PacketType.JOIN, name: MY_NAME });
-      state.pushFeed({ kind: "system", text: `Connected to ${SERVER_URL} as ${MY_NAME}.`, color: "#9ccfd8" });
+      state.pushFeed({ kind: "system", text: `Connected to drawtui server as ${MY_NAME}.`, color: "#9ccfd8" });
       if (!state.inRoom) lobby.clearError();
       state.emitChange();
     });

@@ -50,7 +50,7 @@ export function createSidebar(
   opts: SidebarOptions,
 ): SidebarHandle {
   const container = new BoxRenderable(renderer, {
-    width: 35,
+    width: 44,
     flexShrink: 0,
     flexDirection: "column",
     border: true,
