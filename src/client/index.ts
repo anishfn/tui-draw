@@ -20,9 +20,6 @@ const PALETTE = [
   "#31748f", "#c4a7e7", "#ebbcba", "#3e8fb0",
 ] as const;
 
-const FOOTER =
-  "▶ S start · 🔤 1-3 pick word · ⇆ Tab chat · ✎ b brush · 🧹 e eraser · ↔ [ ] size · 🎨 1-8 color · 🗑 c clear · 📋 Ctrl+Y copy code · Esc leave · ⏻ Ctrl+C quit";
-
 export interface ClientConfig {
   name?: string;
   serverUrl?: string;
@@ -68,7 +65,7 @@ export async function startClient(config: ClientConfig = {}): Promise<void> {
   };
 
   /* --- UI ---------------------------------------------------------------- */
-  const NOT_CONNECTED = `Not connected to ${SERVER_URL} — is the server running and the address correct?`;
+  const NOT_CONNECTED = `Not connected to ${SERVER_URL} - is the server running and the address correct?`;
 
   const lobby = createRoomLobby(renderer, {
     onCreateRoom: (name, password, isPrivate) => {
@@ -100,7 +97,6 @@ export async function startClient(config: ClientConfig = {}): Promise<void> {
         send({ t: PacketType.CHAT_MESSAGE, msg: { sender: state.myName, content: text } }),
     },
   });
-  dash.setFooter(FOOTER);
 
   renderer.root.add(lobby.root);
   renderer.root.add(dash.root);

@@ -24,9 +24,9 @@ import type {
 } from "../types/index.ts";
 
 const AVATARS: readonly string[] = [
-  "🐱", "🐶", "🦊", "🐻", "🐼", "🐨", "🐯", "🦁",
-  "🐮", "🐷", "🐸", "🐙", "🦋", "🐧", "🦅", "🦉",
-  "🐺", "🦄", "🐲", "🦖",
+  ":3", "^^", ":>", "=D", ";)", "x3", "uwu", "owo",
+  "o_o", "._.", ":O", "8)", ":P", ">:)", "-_-", "@_@",
+  "T_T", "=3", "c:", "d:",
 ];
 
 const PLAYER_COLORS: readonly Color[] = [
@@ -159,7 +159,7 @@ export class GameLoop {
     if (this.players.size < MIN_PLAYERS_TO_START && this.phase !== "lobby") {
       this.hooks.broadcastAlert({
         kind: "round",
-        text: "Not enough players — back to the lobby.",
+        text: "Not enough players - back to the lobby.",
       });
       this.gotoLobby();
       return;
@@ -168,7 +168,7 @@ export class GameLoop {
     if (wasDrawer && (this.phase === "drawing" || this.phase === "selecting")) {
       this.hooks.broadcastAlert({
         kind: "info",
-        text: "The drawer left — starting a new turn.",
+        text: "The drawer left - starting a new turn.",
       });
       this.beginIntermission();
     } else {
@@ -382,7 +382,7 @@ export class GameLoop {
 
     this.hooks.broadcastAlert({
       kind: "role",
-      text: `${drawer?.name ?? "Someone"} is choosing a word…`,
+      text: `${drawer?.name ?? "Someone"} is choosing a word...`,
     });
     this.hooks.sendChoices(drawerId, this.choices);
     this.hooks.broadcastSnapshot();
@@ -400,7 +400,7 @@ export class GameLoop {
     const drawer = this.drawerId ? this.players.get(this.drawerId) : undefined;
     this.hooks.broadcastAlert({
       kind: "role",
-      text: `${drawer?.name ?? "Someone"} is drawing — start guessing!`,
+      text: `${drawer?.name ?? "Someone"} is drawing - start guessing!`,
     });
     this.hooks.broadcastSnapshot();
   }
@@ -439,7 +439,7 @@ export class GameLoop {
         return a;
       }
     }
-    return AVATARS[Math.floor(Math.random() * AVATARS.length)] ?? "🎭";
+    return AVATARS[Math.floor(Math.random() * AVATARS.length)] ?? ":)";
   }
 
   /** Pick `n` distinct random words from the bank for the drawer to choose. */

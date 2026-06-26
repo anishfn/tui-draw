@@ -44,7 +44,7 @@ export function createRoomLobby(
   });
 
   const header = new TextRenderable(renderer, {
-    content: "drawtui  —  pick a room or create one",
+    content: "drawtui  -  pick a room or create one",
     flexShrink: 0,
     paddingLeft: 1,
   });
@@ -71,7 +71,7 @@ export function createRoomLobby(
     paddingLeft: 1,
     paddingRight: 1,
   });
-  const listText = new TextRenderable(renderer, { content: "No rooms yet — create one!" });
+  const listText = new TextRenderable(renderer, { content: "No rooms yet - create one!" });
   listBox.add(listText);
 
   /* --- Right panel: create + join forms ------------------------------- */
@@ -94,11 +94,11 @@ export function createRoomLobby(
     gap: 1,
   });
   const createNameInput = new InputRenderable(renderer, {
-    placeholder: "Room name…",
+    placeholder: "Room name...",
     maxLength: 32,
   });
   const createPassInput = new InputRenderable(renderer, {
-    placeholder: "Password (optional)…",
+    placeholder: "Password (optional)...",
     maxLength: 64,
   });
   const createPrivateToggle = new TextRenderable(renderer, {
@@ -121,11 +121,11 @@ export function createRoomLobby(
     gap: 1,
   });
   const joinCodeInput = new InputRenderable(renderer, {
-    placeholder: "Room code (e.g. ABC123)…",
+    placeholder: "Room code (e.g. ABC123)...",
     maxLength: 6,
   });
   const joinPassInput = new InputRenderable(renderer, {
-    placeholder: "Password (if required)…",
+    placeholder: "Password (if required)...",
     maxLength: 64,
   });
   joinBox.add(joinCodeInput);
@@ -139,7 +139,7 @@ export function createRoomLobby(
 
   /* --- Status bar ------------------------------------------------------ */
   const statusBar = new TextRenderable(renderer, {
-    content: "Tab to cycle fields · Enter to submit",
+    content: "Tab to cycle fields | Enter to submit",
     flexShrink: 0,
     paddingLeft: 1,
   });
@@ -225,13 +225,13 @@ export function createRoomLobby(
 
   function setRooms(rooms: RoomInfo[]): void {
     if (rooms.length === 0) {
-      listText.content = "No rooms yet — create one!";
+      listText.content = "No rooms yet - create one!";
       return;
     }
     const chunks: TextChunk[] = [];
     for (let i = 0; i < rooms.length; i++) {
       const r = rooms[i]!;
-      const lock = r.hasPassword ? " 🔒" : "   ";
+      const lock = r.hasPassword ? " * " : "   ";
       const status = r.phase === "drawing" ? "drawing" : r.phase === "intermission" ? "break" : "waiting";
       const count = `${r.playerCount}/${r.maxPlayers}`;
       const line = t`${fg("#89b4fa")(r.id)}${lock}  ${r.name}  ${count}  ${status}`;
@@ -242,11 +242,11 @@ export function createRoomLobby(
   }
 
   function setError(msg: string): void {
-    statusBar.content = t`${fg("#f38ba8")("✗ " + msg)}`;
+    statusBar.content = t`${fg("#f38ba8")("x " + msg)}`;
   }
 
   function clearError(): void {
-    statusBar.content = "Tab to cycle fields · Enter to submit";
+    statusBar.content = "Tab to cycle fields | Enter to submit";
   }
 
   return {

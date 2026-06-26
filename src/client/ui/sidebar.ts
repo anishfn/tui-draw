@@ -90,10 +90,25 @@ export function createSidebar(
     paddingRight: 1,
   });
   const input = new InputRenderable(renderer, {
-    placeholder: "Type your guess…",
+    placeholder: "Type your guess...",
     maxLength: 120,
   });
   inputBox.add(input);
+
+  /* --- Compact controls (below chat) ----------------------------------- */
+  const CONTROLS = [
+    "S start    Tab chat",
+    "b brush    e eraser",
+    "[ ] size   1-8 color",
+    "1-3 word   c clear",
+    "^Y copy    Esc leave",
+    "^C quit",
+  ].join("\n");
+  const controlsText = new TextRenderable(renderer, {
+    content: t`${fg("#6c7086")(CONTROLS)}`,
+    flexShrink: 0,
+    paddingLeft: 1,
+  });
 
   input.on(InputRenderableEvents.ENTER, (value: string) => {
     const text = value.trim();
@@ -105,6 +120,7 @@ export function createSidebar(
   container.add(playersBox);
   container.add(feedBox);
   container.add(inputBox);
+  container.add(controlsText);
 
   /* --------------------------------------------------------------------- */
   /* Helpers                                                               */
@@ -129,14 +145,14 @@ export function createSidebar(
 
   function setPlayers(players: Player[], drawerId: string | null, myName: string) {
     if (players.length === 0) {
-      playersText.content = "Waiting for players…";
+      playersText.content = "Waiting for players...";
       return;
     }
     const sorted = [...players].sort((a, b) => b.score - a.score);
     const lines = sorted.map((p) => {
-      const pen = p.id === drawerId ? "✎ " : "  ";
+      const pen = p.id === drawerId ? "> " : "  ";
       const you = p.name === myName ? " (you)" : "";
-      const check = p.hasGuessed ? " ✓" : "";
+      const check = p.hasGuessed ? " +" : "";
       return t`${pen}${fg(p.color)(p.avatar + " " + p.name)}${you}${check}  ${String(p.score)}`;
     });
     playersText.content = buildLines(lines);
@@ -151,8 +167,8 @@ export function createSidebar(
     }
     const lines = visible.map((line) => {
       if (line.kind === "chat") return `${line.sender ?? "?"}: ${line.text}`;
-      if (line.color) return t`• ${fg(line.color)(line.text)}`;
-      return `• ${line.text}`;
+      if (line.color) return t`* ${fg(line.color)(line.text)}`;
+      return `* ${line.text}`;
     });
     feedText.content = buildLines(lines);
   }

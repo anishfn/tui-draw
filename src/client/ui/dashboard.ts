@@ -50,7 +50,6 @@ export interface DashboardHandle {
   setCanvasStatus(status: CanvasStatus): void;
   /** Show the room code + name on top of the canvas pane. */
   setRoom(code: string, name: string): void;
-  setFooter(text: string): void;
 }
 
 export function createDashboard(
@@ -77,22 +76,15 @@ export function createDashboard(
   });
 
   const statusBar = new TextRenderable(renderer, {
-    content: "Connecting…",
+    content: "Connecting...",
     flexShrink: 0,
     paddingLeft: 1,
   });
 
   const canvas = createCanvas(renderer, wiring.canvas);
 
-  const footer = new TextRenderable(renderer, {
-    content: "",
-    flexShrink: 0,
-    paddingLeft: 1,
-  });
-
   leftPane.add(statusBar);
   leftPane.add(canvas.renderable);
-  leftPane.add(footer);
 
   /* --- Right: sidebar -------------------------------------------------- */
   const sidebar = createSidebar(renderer, wiring.sidebar);
@@ -106,7 +98,7 @@ export function createDashboard(
   // pane's interior every frame. Cheap — `resize()` no-ops when unchanged.
   const fitCanvas = (): void => {
     const w = leftPane.width - 2; // minus left/right border
-    const h = leftPane.height - 2 - statusBar.height - footer.height;
+    const h = leftPane.height - 2 - statusBar.height;
     if (w > 0 && h > 0) canvas.resize(w, h);
   };
   renderer.setFrameCallback(async () => fitCanvas());
@@ -121,9 +113,9 @@ export function createDashboard(
       if (phase === "lobby") {
         statusBar.content = s.amHost
           ? s.enoughPlayers
-            ? t`${fg("#a6e3a1")("● Lobby")}   You are the host — press ${fg("#f9e2af")("[S]")} to start the game`
-            : t`${fg("#f9e2af")("● Lobby")}   Waiting for more players… (need at least 2)`
-          : t`${fg("#89dceb")("● Lobby")}   Waiting for the host to start the game…`;
+            ? t`${fg("#a6e3a1")("* Lobby")}   You are the host - press ${fg("#f9e2af")("[S]")} to start the game`
+            : t`${fg("#f9e2af")("* Lobby")}   Waiting for more players... (need at least 2)`
+          : t`${fg("#89dceb")("* Lobby")}   Waiting for the host to start the game...`;
         return;
       }
 
@@ -133,37 +125,34 @@ export function createDashboard(
             ? s.wordChoices
                 .map((w, i) => `[${i + 1}] ${w}`)
                 .join("   ")
-            : "…";
-          statusBar.content = t`⏱${String(timeLeft)}s   ${fg("#f9e2af")("Choose a word:")}   ${choices}`;
+            : "...";
+          statusBar.content = t`[${String(timeLeft)}s]   ${fg("#f9e2af")("Choose a word:")}   ${choices}`;
         } else {
-          statusBar.content = `⏱${timeLeft}s   ${s.drawerName || "Someone"} is choosing a word…`;
+          statusBar.content = `[${timeLeft}s]   ${s.drawerName || "Someone"} is choosing a word...`;
         }
         return;
       }
 
       if (phase === "intermission") {
-        statusBar.content = t`${fg("#f38ba8")("● Round over")}   next turn in ${String(timeLeft)}s…`;
+        statusBar.content = t`${fg("#f38ba8")("* Round over")}   next turn in ${String(timeLeft)}s...`;
         return;
       }
 
       // drawing phase
       if (drawing) {
-        const brushIcon = mode === "braille" ? "⠿" : "▉";
+        const brushIcon = mode === "braille" ? "::" : "##";
         if (erasing) {
-          statusBar.content = `R${round}  ⏱${timeLeft}s   ✎ YOU DRAW   ${hint}   🧹 eraser  ↔${size}`;
+          statusBar.content = `R${round}  [${timeLeft}s]   YOU DRAW   ${hint}   eraser  w${size}`;
         } else {
-          statusBar.content = t`R${String(round)}  ⏱${String(timeLeft)}s   ✎ YOU DRAW   ${hint}   ${brushIcon} ${fg(color)("●")}  ↔${String(size)}`;
+          statusBar.content = t`R${String(round)}  [${String(timeLeft)}s]   YOU DRAW   ${hint}   ${brushIcon} ${fg(color)("#")}  w${String(size)}`;
         }
       } else {
-        statusBar.content = `R${round}  ⏱${timeLeft}s   guessing…   ${hint}`;
+        statusBar.content = `R${round}  [${timeLeft}s]   guessing...   ${hint}`;
       }
     },
     setRoom(code, name) {
-      leftPane.title = ` ⬢ ${code}${name ? "  ·  " + name : ""} `;
+      leftPane.title = ` ${code}${name ? "  -  " + name : ""} `;
       renderer.requestRender();
-    },
-    setFooter(text) {
-      footer.content = text;
     },
   };
 }
