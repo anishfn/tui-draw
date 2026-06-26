@@ -93,6 +93,7 @@ export function createDashboard(
     flexDirection: "row",
     gap: 1,
     padding: 1,
+    backgroundColor: C.base,
   });
 
   /* --- Left: canvas pane ----------------------------------------------- */
@@ -150,7 +151,7 @@ export function createDashboard(
       borderStyle: "rounded",
       borderColor: accent,
       titleColor: RGBA.fromHex(accent),
-      backgroundColor: "#181825",
+      backgroundColor: C.surface,
       paddingTop: 1,
       paddingBottom: 1,
       paddingLeft: 3,
