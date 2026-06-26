@@ -49,6 +49,9 @@ export async function startClient(config: ClientConfig = {}): Promise<void> {
   let ws: WebSocket | null = null;
   let inputFocused = true;
   let autoActionFired = false;
+  // Chat lines we've already shown locally (optimistic echo). The server
+  // broadcasts our own messages back to us, so we de-dupe that echo here.
+  const pendingEcho: string[] = [];
 
   const send = (packet: Packet): boolean => {
     try {
@@ -90,8 +93,18 @@ export async function startClient(config: ClientConfig = {}): Promise<void> {
       getTool: () => state.tool,
     },
     sidebar: {
-      onSubmit: (text) =>
-        send({ t: PacketType.CHAT_MESSAGE, msg: { sender: state.myName, content: text } }),
+      onSubmit: (text) => {
+        const ok = send({ t: PacketType.CHAT_MESSAGE, msg: { sender: state.myName, content: text } });
+        if (!ok) return;
+        // Render our own line immediately instead of waiting for the server
+        // round-trip (the source of the "chat feels slow" lag). The server
+        // slices content to 200 chars, so match that for the echo de-dupe.
+        const shown = text.slice(0, 200);
+        pendingEcho.push(shown);
+        if (pendingEcho.length > 32) pendingEcho.shift();
+        state.pushFeed({ kind: "chat", sender: state.myName, text: shown });
+        state.emitChange();
+      },
     },
   });
 
@@ -290,10 +303,16 @@ export async function startClient(config: ClientConfig = {}): Promise<void> {
       case PacketType.DRAW_POINT:   dash.canvas.apply(packet.point); break;
       case PacketType.CLEAR_BOARD:  dash.canvas.clear(); break;
 
-      case PacketType.CHAT_MESSAGE:
+      case PacketType.CHAT_MESSAGE: {
+        // Skip the echo of a line we already rendered optimistically on submit.
+        if (packet.msg.sender === state.myName) {
+          const i = pendingEcho.indexOf(packet.msg.content);
+          if (i >= 0) { pendingEcho.splice(i, 1); break; }
+        }
         state.pushFeed({ kind: "chat", sender: packet.msg.sender, text: packet.msg.content });
         state.emitChange();
         break;
+      }
 
       case PacketType.SYSTEM_ALERT:
         state.pushAlert(packet.alert);

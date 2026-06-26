@@ -69,8 +69,15 @@ export class ClientState {
 
   /** Active drawing tool (drawer-side only). */
   tool: "brush" | "line" | "rect" | "circle" | "fill" = "brush";
-  /** Current local drawing tool selection (drawer-side only). */
-  drawMode: DrawMode = "braille";
+  /**
+   * Current local drawing tool selection (drawer-side only).
+   *
+   * Defaults to `block`: its glyph is the solid `█`, which is the one non-ASCII
+   * character that renders reliably everywhere (see the canvas framebuffer path).
+   * Braille (`g` to toggle) gives 8x the resolution but its U+28xx glyphs depend
+   * on terminal/font support and show as mojibake (e.g. `a^`) where it's missing.
+   */
+  drawMode: DrawMode = "block";
   /** Current local pen color (drawer-side only). Defaults to the first palette slot. */
   drawColor = "#e0def4";
   /** Brush radius (dots for braille, cells for block). */
