@@ -93,7 +93,7 @@ export function createDashboard(
     flexDirection: "row",
     gap: 1,
     padding: 1,
-    backgroundColor: C.base,
+    // No background: stay transparent so the user's terminal/wallpaper shows.
   });
 
   /* --- Left: canvas pane ----------------------------------------------- */
