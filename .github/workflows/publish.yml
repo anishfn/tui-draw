@@ -1,0 +1,56 @@
+name: Publish to npm
+
+on:
+  push:
+    branches: [master]
+
+# Avoid overlapping publish runs
+concurrency:
+  group: npm-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2 # need previous commit to diff the version
+
+      - name: Check if version changed
+        id: check
+        run: |
+          NEW_VERSION="$(jq -r .version package.json)"
+          # Version from the previous commit (empty if package.json is new)
+          OLD_VERSION="$(git show HEAD~1:package.json 2>/dev/null | jq -r .version || echo '')"
+          echo "old=$OLD_VERSION new=$NEW_VERSION"
+          if [ "$NEW_VERSION" != "$OLD_VERSION" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Bun
+        if: steps.check.outputs.changed == 'true'
+        uses: oven-sh/setup-bun@v2
+
+      - name: Setup Node (for npm publish + registry auth)
+        if: steps.check.outputs.changed == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+
+      - name: Install dependencies
+        if: steps.check.outputs.changed == 'true'
+        run: bun install --frozen-lockfile
+
+      - name: Build
+        if: steps.check.outputs.changed == 'true'
+        run: bun run build
+
+      - name: Publish
+        if: steps.check.outputs.changed == 'true'
+        run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
