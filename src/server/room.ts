@@ -87,6 +87,15 @@ export class Room {
     this.game.startGame(playerId);
   }
 
+  setRounds(playerId: string, rounds: number): void {
+    this.game.setRounds(playerId, rounds);
+  }
+
+  /** The room password (members already know it; never sent to non-members). */
+  getPassword(): string | null {
+    return this.password;
+  }
+
   chooseWord(playerId: string, index: number): void {
     this.game.chooseWord(playerId, index);
   }

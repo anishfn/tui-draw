@@ -85,6 +85,8 @@ export class GameLoop {
   private choices: string[] = [];
   private timeLeft = 0;
   private round = 0;
+  /** How many full rounds (everyone draws once) the game runs. Host-set. */
+  private totalRounds = 3;
   /** Replay buffer for the current turn's strokes. */
   private history: DrawPointPayload[] = [];
   /** Index into {@link rotation} for the next drawer. */
@@ -201,9 +203,22 @@ export class GameLoop {
       });
       return;
     }
+    // Fresh game: wipe last game's scores.
+    for (const p of this.players.values()) p.score = 0;
     this.round = 0;
     this.rotationCursor = 0;
     this.beginSelection();
+  }
+
+  /**
+   * Set how many rounds the game runs. Only the host may change it, and only
+   * from the lobby. Clamped to a sane range.
+   */
+  setRounds(playerId: string, rounds: number): void {
+    if (playerId !== this.hostId || this.phase !== "lobby") return;
+    if (!Number.isFinite(rounds)) return;
+    this.totalRounds = Math.max(1, Math.min(10, Math.round(rounds)));
+    this.hooks.broadcastSnapshot();
   }
 
   /** The drawer commits to one of the three offered words. */
@@ -306,6 +321,7 @@ export class GameLoop {
       reveal: this.phase === "intermission" ? this.word : null,
       timeLeft: this.timeLeft,
       round: this.round,
+      totalRounds: this.totalRounds,
       history: this.history,
     };
   }
@@ -369,6 +385,12 @@ export class GameLoop {
     }
     if (this.round === 0) this.round = 1;
 
+    // The game is over once we'd start a round beyond the configured total.
+    if (this.round > this.totalRounds) {
+      this.endGame();
+      return;
+    }
+
     const drawerId = this.rotation[this.rotationCursor] ?? this.rotation[0]!;
     this.rotationCursor += 1;
     this.drawerId = drawerId;
@@ -418,6 +440,19 @@ export class GameLoop {
       if (drawer) drawer.isDrawing = false;
     }
     this.hooks.broadcastSnapshot();
+  }
+
+  /** Announce the winner and return everyone to the lobby for a rematch. */
+  private endGame(): void {
+    const ranked = [...this.players.values()].sort((a, b) => b.score - a.score);
+    const winner = ranked[0];
+    this.hooks.broadcastAlert({
+      kind: "correct",
+      text: winner
+        ? `Game over! ${winner.name} wins with ${winner.score} points!`
+        : "Game over!",
+    });
+    this.gotoLobby();
   }
 
   private gotoLobby(): void {

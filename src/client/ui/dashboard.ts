@@ -48,6 +48,8 @@ export interface CanvasStatus {
   enoughPlayers: boolean;
   /** Display name of the current drawer (for guessers' banners). */
   drawerName: string;
+  /** Total rounds configured for the game (shown in lobby + status). */
+  totalRounds: number;
   /** The three words offered to us while choosing. */
   wordChoices: string[];
   mode: string;
@@ -63,8 +65,8 @@ export interface DashboardHandle {
   readonly canvas: CanvasHandle;
   readonly sidebar: SidebarHandle;
   setCanvasStatus(status: CanvasStatus): void;
-  /** Show the room code + name on top of the canvas pane. */
-  setRoom(code: string, name: string): void;
+  /** Show the room code + name (+ password for private rooms) atop the canvas. */
+  setRoom(code: string, name: string, password: string): void;
   /** Show / hide the intermission scoreboard overlay. */
   showScoreboard(players: Player[], myName: string, reveal: string | null): void;
   hideScoreboard(): void;
@@ -257,11 +259,12 @@ export function createDashboard(
       renderToolBar(s);
 
       if (phase === "lobby") {
+        const rounds = `rounds ${s.totalRounds}`;
         statusBar.content = s.amHost
           ? s.enoughPlayers
-            ? t`${fg(C.good)("* Lobby")}   You are the host - press ${fg(C.warn)("[S]")} to start`
-            : t`${fg(C.warn)("* Lobby")}   Waiting for more players... (need at least 2)`
-          : t`${fg(C.info)("* Lobby")}   Waiting for the host to start the game...`;
+            ? t`${fg(C.good)("* Lobby")}   ${fg(C.text)(rounds)} ${fg(C.muted)("([ ] change)")}   press ${fg(C.warn)("[S]")} to start`
+            : t`${fg(C.warn)("* Lobby")}   ${fg(C.text)(rounds)} ${fg(C.muted)("([ ] change)")}   need 2+ players...`
+          : t`${fg(C.info)("* Lobby")}   ${fg(C.text)(rounds)}   waiting for the host to start...`;
         return;
       }
 
@@ -278,15 +281,17 @@ export function createDashboard(
       }
 
       // drawing phase
+      const roundTag = `Round ${round}/${s.totalRounds}`;
       if (drawing) {
-        statusBar.content = t`${fg(C.good)("R" + round)}  ${fg(C.accent)("YOU DRAW")}   ${hint}`;
+        statusBar.content = t`${fg(C.good)(roundTag)}  ${fg(C.accent)("YOU DRAW")}   ${hint}`;
       } else {
-        statusBar.content = t`${fg(C.good)("R" + round)}  guessing...   ${fg(C.warn)(hint)}`;
+        statusBar.content = t`${fg(C.good)(roundTag)}  guessing...   ${fg(C.warn)(hint)}`;
       }
     },
 
-    setRoom(code, name) {
-      leftPane.title = ` ${code}${name ? "  -  " + name : ""} `;
+    setRoom(code, name, password) {
+      const pw = password ? `   pw: ${password}` : "";
+      leftPane.title = ` ${code}${name ? "  -  " + name : ""}${pw} `;
       renderer.requestRender();
     },
 

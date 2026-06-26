@@ -142,6 +142,8 @@ export interface GameSnapshot {
   timeLeft: number;
   /** Current round number (1-based). */
   round: number;
+  /** Total rounds the host configured for this game. */
+  totalRounds: number;
   /** Replay buffer so the board can be reconstructed mid-turn. */
   history: DrawPointPayload[];
 }
@@ -162,6 +164,7 @@ export const PacketType = {
   LEAVE_ROOM: "LEAVE_ROOM",
   // In-game
   START_GAME: "START_GAME",
+  SET_ROUNDS: "SET_ROUNDS",
   WORD_CHOICES: "WORD_CHOICES",
   CHOOSE_WORD: "CHOOSE_WORD",
   DRAW_POINT: "DRAW_POINT",
@@ -185,11 +188,12 @@ export type Packet =
   | { t: typeof PacketType.ROOM_LIST; rooms: RoomInfo[] }
   | { t: typeof PacketType.CREATE_ROOM; name: string; password?: string; isPrivate?: boolean }
   | { t: typeof PacketType.JOIN_ROOM; roomId: string; password?: string }
-  | { t: typeof PacketType.ROOM_JOINED; roomId: string; roomName: string }
+  | { t: typeof PacketType.ROOM_JOINED; roomId: string; roomName: string; password?: string }
   | { t: typeof PacketType.ROOM_ERROR; text: string }
   | { t: typeof PacketType.LEAVE_ROOM }
   // In-game
   | { t: typeof PacketType.START_GAME }
+  | { t: typeof PacketType.SET_ROUNDS; rounds: number }
   | { t: typeof PacketType.WORD_CHOICES; words: string[] }
   | { t: typeof PacketType.CHOOSE_WORD; index: number }
   | { t: typeof PacketType.DRAW_POINT; point: DrawPointPayload }
@@ -235,6 +239,7 @@ export function decodePacket(raw: string | Buffer | ArrayBuffer): Packet | null 
       case PacketType.ROOM_ERROR:
       case PacketType.LEAVE_ROOM:
       case PacketType.START_GAME:
+      case PacketType.SET_ROUNDS:
       case PacketType.WORD_CHOICES:
       case PacketType.CHOOSE_WORD:
       case PacketType.DRAW_POINT:

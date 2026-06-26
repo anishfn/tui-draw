@@ -81,7 +81,7 @@ function handlePacket(ws: ServerWebSocket<Session>, packet: Packet): void {
       }
       const room = registry.create(name, packet.password, packet.isPrivate ?? false);
       room.addClient(ws);
-      send(ws, { t: PacketType.ROOM_JOINED, roomId: room.id, roomName: room.name });
+      send(ws, { t: PacketType.ROOM_JOINED, roomId: room.id, roomName: room.name, password: room.getPassword() ?? undefined });
       send(ws, { t: PacketType.STATE_SYNC, state: room.snapshotFor(ws.data.id) });
       pushRoomList();
       break;
@@ -108,7 +108,7 @@ function handlePacket(ws: ServerWebSocket<Session>, packet: Packet): void {
       }
       registry.cancelCleanup(room.id);
       room.addClient(ws);
-      send(ws, { t: PacketType.ROOM_JOINED, roomId: room.id, roomName: room.name });
+      send(ws, { t: PacketType.ROOM_JOINED, roomId: room.id, roomName: room.name, password: room.getPassword() ?? undefined });
       send(ws, { t: PacketType.STATE_SYNC, state: room.snapshotFor(ws.data.id) });
       pushRoomList();
       break;
@@ -141,6 +141,13 @@ function handlePacket(ws: ServerWebSocket<Session>, packet: Packet): void {
       if (!room) break;
       room.startGame(ws.data.id);
       pushRoomList();
+      break;
+    }
+
+    case PacketType.SET_ROUNDS: {
+      const room = ws.data.roomId ? registry.get(ws.data.roomId) : undefined;
+      if (!room) break;
+      room.setRounds(ws.data.id, packet.rounds);
       break;
     }
 

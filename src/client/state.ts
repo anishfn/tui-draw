@@ -53,6 +53,8 @@ export class ClientState {
   wordChoices: string[] = [];
   timeLeft = 0;
   round = 0;
+  /** Total rounds configured for the current game. */
+  totalRounds = 3;
 
   /** Rolling chat + system feed (most recent last). */
   feed: FeedLine[] = [];
@@ -61,6 +63,8 @@ export class ClientState {
   inRoom = false;
   roomId: string | null = null;
   roomName = "";
+  /** This room's password (members already know it), shown so it can be shared. */
+  roomPassword = "";
   roomList: RoomInfo[] = [];
 
   /** Active drawing tool (drawer-side only). */

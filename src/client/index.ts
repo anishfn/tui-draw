@@ -1,4 +1,4 @@
-import { CliRenderEvents, createCliRenderer } from "@opentui/core";
+import { BoxRenderable, CliRenderEvents, TextRenderable, createCliRenderer, fg, t } from "@opentui/core";
 import {
   DEFAULT_SERVER_URL,
   PacketType,
@@ -10,7 +10,7 @@ import {
 import { ClientState } from "./state.ts";
 import { createDashboard } from "./ui/dashboard.ts";
 import { createRoomLobby } from "./ui/roomLobby.ts";
-import { PALETTE } from "./ui/theme.ts";
+import { C, PALETTE } from "./ui/theme.ts";
 
 /* -------------------------------------------------------------------------- */
 /* Config                                                                     */
@@ -37,7 +37,7 @@ export async function startClient(config: ClientConfig = {}): Promise<void> {
   const SERVER_URL = config.serverUrl ?? process.env.SERVER ?? DEFAULT_SERVER_URL;
 
   const renderer = await createCliRenderer({
-    exitOnCtrlC: true,
+    exitOnCtrlC: false, // we confirm quit ourselves
     useMouse: true,
     enableMouseMovement: true,
     targetFps: 60,
@@ -99,6 +99,37 @@ export async function startClient(config: ClientConfig = {}): Promise<void> {
   renderer.root.add(dash.root);
   dash.root.visible = false;
 
+  /* --- Global quit-confirm overlay (Ctrl+C twice to quit) ---------------- */
+  const quitOverlay = new BoxRenderable(renderer, {
+    position: "absolute",
+    top: 0, left: 0, width: "100%", height: "100%",
+    justifyContent: "center", alignItems: "center",
+    zIndex: 100, visible: false,
+  });
+  const quitBox = new BoxRenderable(renderer, {
+    border: true, borderStyle: "rounded", borderColor: C.bad,
+    titleColor: undefined, backgroundColor: C.surface,
+    paddingTop: 1, paddingBottom: 1, paddingLeft: 3, paddingRight: 3,
+    flexDirection: "column", title: " Quit? ", titleAlignment: "center",
+  });
+  quitBox.add(new TextRenderable(renderer, {
+    content: t`${fg(C.text)("Leave the game and quit drawtui?")}`,
+  }));
+  quitBox.add(new TextRenderable(renderer, {
+    content: t`${fg(C.muted)("press ")}${fg(C.bad)("Ctrl+C")}${fg(C.muted)(" again to quit, any other key to cancel")}`,
+  }));
+  quitOverlay.add(quitBox);
+  renderer.root.add(quitOverlay);
+  let pendingQuit = false;
+  let quitTimer: ReturnType<typeof setTimeout> | null = null;
+  const cancelQuit = (): void => {
+    if (!pendingQuit) return;
+    pendingQuit = false;
+    quitOverlay.visible = false;
+    if (quitTimer) { clearTimeout(quitTimer); quitTimer = null; }
+    renderer.requestRender();
+  };
+
   /* --- Transient celebration banner -------------------------------------- */
   let toastTimer: ReturnType<typeof setTimeout> | null = null;
   const flashToast = (text: string): void => {
@@ -146,6 +177,7 @@ export async function startClient(config: ClientConfig = {}): Promise<void> {
         amHost: state.amHost,
         enoughPlayers: state.players.length >= 2,
         drawerName: drawer?.name ?? "",
+        totalRounds: state.totalRounds,
         wordChoices: state.wordChoices,
         mode: state.drawMode,
         color: state.drawColor,
@@ -208,11 +240,12 @@ export async function startClient(config: ClientConfig = {}): Promise<void> {
       case PacketType.ROOM_JOINED:
         state.roomId = packet.roomId;
         state.roomName = packet.roomName;
+        state.roomPassword = packet.password ?? "";
         firstSync = true;
         prevDrawerId = null;
         prevRound = -1;
         prevWantInput = true;
-        dash.setRoom(packet.roomId, packet.roomName);
+        dash.setRoom(packet.roomId, packet.roomName, state.roomPassword);
         switchToGame();
         break;
 
@@ -233,6 +266,7 @@ export async function startClient(config: ClientConfig = {}): Promise<void> {
         state.reveal = s.reveal;
         state.timeLeft = s.timeLeft;
         state.round = s.round;
+        state.totalRounds = s.totalRounds;
         state.amHost = s.selfId !== "" && s.selfId === s.hostId;
         state.amDrawing = s.phase === "drawing" && s.selfId === s.drawerId;
         state.amChoosing = s.phase === "selecting" && s.selfId === s.drawerId;
@@ -273,6 +307,7 @@ export async function startClient(config: ClientConfig = {}): Promise<void> {
       case PacketType.JOIN_ROOM:
       case PacketType.LEAVE_ROOM:
       case PacketType.START_GAME:
+      case PacketType.SET_ROUNDS:
       case PacketType.CHOOSE_WORD:
         break;
     }
@@ -328,6 +363,19 @@ export async function startClient(config: ClientConfig = {}): Promise<void> {
 
   /* --- Keyboard ---------------------------------------------------------- */
   renderer.keyInput.on("keypress", (key) => {
+    // Confirm-on-quit: first Ctrl+C asks, second within the window quits.
+    if (key.ctrl && key.name === "c") {
+      if (pendingQuit) { cleanup(); process.exit(0); }
+      pendingQuit = true;
+      quitOverlay.visible = true;
+      renderer.requestRender();
+      if (quitTimer) clearTimeout(quitTimer);
+      quitTimer = setTimeout(cancelQuit, 4000);
+      return;
+    }
+    // Any other key dismisses the quit prompt without acting on that key.
+    if (pendingQuit) { cancelQuit(); return; }
+
     if (!state.inRoom) {
       lobby.handleKeypress(key);
       return;
@@ -369,6 +417,10 @@ export async function startClient(config: ClientConfig = {}): Promise<void> {
     // Lobby phase: the host starts the game with [S].
     if (state.phase === "lobby") {
       if (key.name === "s" && state.amHost) send({ t: PacketType.START_GAME });
+      if (state.amHost && (key.name === "[" || key.name === "]")) {
+        const next = state.totalRounds + (key.name === "]" ? 1 : -1);
+        send({ t: PacketType.SET_ROUNDS, rounds: Math.max(1, Math.min(10, next)) });
+      }
       return;
     }
 
