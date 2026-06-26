@@ -10,15 +10,11 @@ import {
 import { ClientState } from "./state.ts";
 import { createDashboard } from "./ui/dashboard.ts";
 import { createRoomLobby } from "./ui/roomLobby.ts";
+import { PALETTE } from "./ui/theme.ts";
 
 /* -------------------------------------------------------------------------- */
 /* Config                                                                     */
 /* -------------------------------------------------------------------------- */
-
-const PALETTE = [
-  "#e0def4", "#eb6f92", "#f6c177", "#9ccfd8",
-  "#31748f", "#c4a7e7", "#ebbcba", "#3e8fb0",
-] as const;
 
 export interface ClientConfig {
   name?: string;
@@ -91,6 +87,7 @@ export async function startClient(config: ClientConfig = {}): Promise<void> {
       getMode: () => state.drawMode,
       getSize: () => state.brushSize,
       getErase: () => state.erasing,
+      getTool: () => state.tool,
     },
     sidebar: {
       onSubmit: (text) =>
@@ -101,6 +98,19 @@ export async function startClient(config: ClientConfig = {}): Promise<void> {
   renderer.root.add(lobby.root);
   renderer.root.add(dash.root);
   dash.root.visible = false;
+
+  /* --- Transient celebration banner -------------------------------------- */
+  let toastTimer: ReturnType<typeof setTimeout> | null = null;
+  const flashToast = (text: string): void => {
+    dash.showToast(text);
+    try { process.stdout.write("\x07"); } catch { /* no bell */ }
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => dash.hideToast(), 1800);
+  };
+
+  const updateActivePane = (): void => {
+    dash.setActivePane(inputFocused ? "chat" : "canvas");
+  };
 
   /* --- Phase switching --------------------------------------------------- */
   const switchToLobby = (): void => {
@@ -141,8 +151,14 @@ export async function startClient(config: ClientConfig = {}): Promise<void> {
         color: state.drawColor,
         size: state.brushSize,
         erasing: state.erasing,
+        tool: state.tool,
       });
       dash.canvas.setInteractive(state.amDrawing);
+      if (state.phase === "intermission") {
+        dash.showScoreboard(state.players, state.myName, state.reveal);
+      } else {
+        dash.hideScoreboard();
+      }
     } else {
       lobby.setRooms(state.roomList);
     }
@@ -165,6 +181,7 @@ export async function startClient(config: ClientConfig = {}): Promise<void> {
     inputFocused = wantInput;
     if (wantInput) dash.sidebar.input.focus();
     else dash.sidebar.input.blur();
+    updateActivePane();
   };
 
   const onPacket = (packet: Packet): void => {
@@ -208,6 +225,7 @@ export async function startClient(config: ClientConfig = {}): Promise<void> {
         state.hostId = s.hostId;
         state.hint = s.hint;
         state.word = s.word;
+        state.reveal = s.reveal;
         state.timeLeft = s.timeLeft;
         state.round = s.round;
         state.amHost = s.selfId !== "" && s.selfId === s.hostId;
@@ -240,6 +258,7 @@ export async function startClient(config: ClientConfig = {}): Promise<void> {
 
       case PacketType.SYSTEM_ALERT:
         state.pushAlert(packet.alert);
+        if (packet.alert.kind === "correct") flashToast(packet.alert.text);
         state.emitChange();
         break;
 
@@ -255,9 +274,13 @@ export async function startClient(config: ClientConfig = {}): Promise<void> {
   };
 
   /* --- WebSocket --------------------------------------------------------- */
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   const connect = (): void => {
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+    dash.sidebar.setConnection("connecting");
     ws = new WebSocket(SERVER_URL);
     ws.addEventListener("open", () => {
+      dash.sidebar.setConnection("online");
       send({ t: PacketType.JOIN, name: MY_NAME });
       state.pushFeed({ kind: "system", text: `Connected to ${SERVER_URL} as ${MY_NAME}.`, color: "#9ccfd8" });
       if (!state.inRoom) lobby.clearError();
@@ -270,6 +293,7 @@ export async function startClient(config: ClientConfig = {}): Promise<void> {
       } catch { /* swallow malformed traffic */ }
     });
     ws.addEventListener("close", () => {
+      dash.sidebar.setConnection("offline");
       state.pushFeed({ kind: "system", text: "Disconnected from server.", color: "#eb6f92" });
       state.amDrawing = false;
       state.inRoom = false;
@@ -277,8 +301,13 @@ export async function startClient(config: ClientConfig = {}): Promise<void> {
       autoActionFired = false;
       state.emitChange();
       switchToLobby();
+      // Auto-reconnect unless we're shutting down.
+      if (!cleanedUp && !reconnectTimer) {
+        reconnectTimer = setTimeout(connect, 2000);
+      }
     });
     ws.addEventListener("error", () => {
+      dash.sidebar.setConnection("offline");
       state.pushFeed({
         kind: "system",
         text: `Could not reach ${SERVER_URL}. Is the server running?`,
@@ -296,6 +325,12 @@ export async function startClient(config: ClientConfig = {}): Promise<void> {
   renderer.keyInput.on("keypress", (key) => {
     if (!state.inRoom) {
       lobby.handleKeypress(key);
+      return;
+    }
+
+    // While the help overlay is up, any key dismisses it.
+    if (dash.isHelpOpen()) {
+      dash.toggleHelp();
       return;
     }
 
@@ -347,17 +382,38 @@ export async function startClient(config: ClientConfig = {}): Promise<void> {
       inputFocused = !inputFocused;
       if (inputFocused) dash.sidebar.input.focus();
       else dash.sidebar.input.blur();
+      updateActivePane();
       renderer.requestRender();
+      return;
+    }
+
+    // Help overlay can be opened any time (outside the chat input).
+    if (!inputFocused && (key.name === "?" || key.sequence === "?")) {
+      dash.toggleHelp();
       return;
     }
 
     if (inputFocused) return;
 
     switch (key.name) {
-      case "b": state.drawMode = state.drawMode === "braille" ? "block" : "braille"; state.emitChange(); break;
+      case "b": state.tool = "brush"; state.erasing = false; state.emitChange(); break;
+      case "n": state.tool = "line"; state.erasing = false; state.emitChange(); break;
+      case "m": state.tool = "rect"; state.erasing = false; state.emitChange(); break;
+      case "v": state.tool = "circle"; state.erasing = false; state.emitChange(); break;
+      case "f": state.tool = "fill"; state.erasing = false; state.emitChange(); break;
+      case "g": state.drawMode = state.drawMode === "braille" ? "block" : "braille"; state.emitChange(); break;
       case "e": state.erasing = !state.erasing; state.emitChange(); break;
       case "[": state.brushSize = Math.max(1, state.brushSize - 1); state.emitChange(); break;
       case "]": state.brushSize = Math.min(8, state.brushSize + 1); state.emitChange(); break;
+      case "z": {
+        if (!state.amDrawing) break;
+        const pts = key.shift ? dash.canvas.redo() : dash.canvas.undo();
+        if (pts) {
+          send({ t: PacketType.CLEAR_BOARD });
+          for (const p of pts) send({ t: PacketType.DRAW_POINT, point: p });
+        }
+        break;
+      }
       case "c":
         if (state.amDrawing) { send({ t: PacketType.CLEAR_BOARD }); dash.canvas.clear(); }
         break;

@@ -4,21 +4,33 @@
  * Master layout shell.
  *
  * Splits the terminal workspace into two flex regions:
- *   ┌────────────────────────────┬───────────────────┐
- *   │  Left: drawing canvas       │  Right: sidebar   │
- *   │  (bordered, grows to fill)  │  (fixed width 35) │
- *   └────────────────────────────┴───────────────────┘
+ *   +----------------------------+-------------------+
+ *   |  Left: drawing canvas      |  Right: sidebar   |
+ *   |  (status, timer, canvas,   |  (players, chat,  |
+ *   |   tool HUD + overlays)     |   guess, keys)    |
+ *   +----------------------------+-------------------+
  *
- * Theme-free: no background or color overrides — the layout inherits the
- * terminal's own palette. The left pane carries a status header above the
- * {@link CanvasHandle}; the right pane is the {@link SidebarHandle}.
+ * The left pane stacks a status header and a countdown bar above the
+ * {@link CanvasHandle}, a tool HUD below it, and floats three absolute
+ * overlays (intermission scoreboard, celebration toast, help) on top.
  * --------------------------------------------------------------------------
  */
 
-import { BoxRenderable, TextRenderable, fg, t, type CliRenderer } from "@opentui/core";
-import type { GamePhase } from "../../types/index.ts";
+import {
+  BoxRenderable,
+  StyledText,
+  TextRenderable,
+  bg,
+  fg,
+  t,
+  stringToStyledText,
+  type TextChunk,
+  type CliRenderer,
+} from "@opentui/core";
+import type { GamePhase, Player } from "../../types/index.ts";
 import { createCanvas, type CanvasHandle, type CanvasOptions } from "./canvas.ts";
 import { createSidebar, type SidebarHandle, type SidebarOptions } from "./sidebar.ts";
+import { C, PALETTE, PALETTE_NAMES, barColor } from "./theme.ts";
 
 export interface CanvasStatus {
   phase: GamePhase;
@@ -41,6 +53,8 @@ export interface CanvasStatus {
   color: string;
   size: number;
   erasing: boolean;
+  /** Active drawing tool: brush | line | rect | circle | fill. */
+  tool: string;
 }
 
 export interface DashboardHandle {
@@ -50,7 +64,20 @@ export interface DashboardHandle {
   setCanvasStatus(status: CanvasStatus): void;
   /** Show the room code + name on top of the canvas pane. */
   setRoom(code: string, name: string): void;
+  /** Show / hide the intermission scoreboard overlay. */
+  showScoreboard(players: Player[], myName: string, reveal: string | null): void;
+  hideScoreboard(): void;
+  /** Flash a transient banner over the canvas (e.g. a correct guess). */
+  showToast(text: string, color?: string): void;
+  hideToast(): void;
+  /** Toggle the controls/help overlay. Returns the new visibility. */
+  toggleHelp(): boolean;
+  isHelpOpen(): boolean;
+  /** Highlight whichever region is active (`"canvas"` or `"chat"`). */
+  setActivePane(pane: "canvas" | "chat"): void;
 }
+
+const BAR_WIDTH = 18;
 
 export function createDashboard(
   renderer: CliRenderer,
@@ -71,6 +98,7 @@ export function createDashboard(
     flexDirection: "column",
     border: true,
     borderStyle: "rounded",
+    borderColor: C.border,
     title: " Canvas ",
     titleAlignment: "center",
   });
@@ -81,10 +109,70 @@ export function createDashboard(
     paddingLeft: 1,
   });
 
+  const timerBar = new TextRenderable(renderer, {
+    content: "",
+    flexShrink: 0,
+    paddingLeft: 1,
+  });
+
   const canvas = createCanvas(renderer, wiring.canvas);
 
+  const toolBar = new TextRenderable(renderer, {
+    content: "",
+    flexShrink: 0,
+    paddingLeft: 1,
+  });
+
   leftPane.add(statusBar);
+  leftPane.add(timerBar);
   leftPane.add(canvas.renderable);
+  leftPane.add(toolBar);
+
+  /* --- Overlays (absolute, float over the canvas) ---------------------- */
+  function makeOverlay(zIndex: number): { layer: BoxRenderable; box: BoxRenderable } {
+    const layer = new BoxRenderable(renderer, {
+      position: "absolute",
+      top: 0,
+      left: 0,
+      width: "100%",
+      height: "100%",
+      justifyContent: "center",
+      alignItems: "center",
+      zIndex,
+      visible: false,
+    });
+    const box = new BoxRenderable(renderer, {
+      border: true,
+      borderStyle: "rounded",
+      borderColor: C.accent,
+      backgroundColor: "#1e1e2e",
+      padding: 1,
+      flexDirection: "column",
+    });
+    layer.add(box);
+    leftPane.add(layer);
+    return { layer, box };
+  }
+
+  const score = makeOverlay(10);
+  score.box.title = " Scoreboard ";
+  score.box.titleAlignment = "center";
+  const scoreText = new TextRenderable(renderer, { content: "" });
+  score.box.add(scoreText);
+
+  const toast = makeOverlay(20);
+  toast.layer.justifyContent = "flex-start";
+  toast.box.borderColor = C.good;
+  const toastText = new TextRenderable(renderer, { content: "" });
+  toast.box.add(toastText);
+
+  const help = makeOverlay(30);
+  help.box.title = " Controls ";
+  help.box.titleAlignment = "center";
+  const helpText = new TextRenderable(renderer, {
+    content: t`${fg(C.text)(HELP_BODY())}`,
+  });
+  help.box.add(helpText);
 
   /* --- Right: sidebar -------------------------------------------------- */
   const sidebar = createSidebar(renderer, wiring.sidebar);
@@ -93,66 +181,185 @@ export function createDashboard(
   root.add(sidebar.container);
 
   /* --- Canvas sizing ---------------------------------------------------- */
-  // The canvas framebuffer must be sized explicitly to the laid-out pane: it
-  // blits with no clipping and can't cross-axis-stretch, so we feed it the
-  // pane's interior every frame. Cheap — `resize()` no-ops when unchanged.
   const fitCanvas = (): void => {
+    // Responsive sidebar: shrink it on narrow terminals so the canvas survives.
+    const total = root.width;
+    const sbW = total < 60 ? 24 : total < 90 ? 30 : 35;
+    if (sidebar.container.width !== sbW) sidebar.container.width = sbW;
+
     const w = leftPane.width - 2; // minus left/right border
-    const h = leftPane.height - 2 - statusBar.height;
+    const h =
+      leftPane.height - 2 - statusBar.height - timerBar.height - toolBar.height;
     if (w > 0 && h > 0) canvas.resize(w, h);
   };
   renderer.setFrameCallback(async () => fitCanvas());
+
+  /* --- Timer-bar scale tracking ---------------------------------------- */
+  let phaseKey = "";
+  let maxTime = 1;
+
+  function renderTimer(phase: GamePhase, timeLeft: number, round: number): void {
+    if (phase === "lobby") {
+      timerBar.content = "";
+      return;
+    }
+    const key = `${phase}:${round}`;
+    if (key !== phaseKey || timeLeft > maxTime) {
+      phaseKey = key;
+      maxTime = Math.max(1, timeLeft);
+    }
+    const frac = Math.max(0, Math.min(1, timeLeft / maxTime));
+    const filled = Math.round(frac * BAR_WIDTH);
+    const bar = "#".repeat(filled) + "-".repeat(BAR_WIDTH - filled);
+    timerBar.content = t`${fg(barColor(frac))("[" + bar + "]")} ${fg(C.muted)(timeLeft + "s")}`;
+  }
+
+  /* --- Tool HUD (drawer only) ------------------------------------------ */
+  function renderToolBar(s: CanvasStatus): void {
+    if (!s.drawing) {
+      toolBar.content = "";
+      return;
+    }
+    const chunks: TextChunk[] = [];
+    const push = (st: StyledText | string) =>
+      chunks.push(...(typeof st === "string" ? stringToStyledText(st) : st).chunks);
+
+    push(t`${fg(C.muted)("ink ")}`);
+    for (let i = 0; i < PALETTE.length; i++) {
+      const active = !s.erasing && PALETTE[i] === s.color;
+      push(t`${bg(PALETTE[i]!)(active ? `[${i + 1}]` : ` ${i + 1} `)}`);
+    }
+    const toolName = s.erasing ? "eraser" : s.tool;
+    const colorName = s.erasing
+      ? "-"
+      : PALETTE_NAMES[PALETTE.indexOf(s.color as `#${string}`)] ?? "?";
+    push(t`  ${fg(C.accent)(toolName)} ${fg(C.muted)(`(${colorName})`)}  size ${fg(C.text)(String(s.size))}  ${fg(C.muted)(s.mode)}`);
+    toolBar.content = new StyledText(chunks);
+  }
 
   return {
     root,
     canvas,
     sidebar,
     setCanvasStatus(s) {
-      const { phase, hint, timeLeft, round, drawing, choosing, mode, color, size, erasing } = s;
+      const { phase, hint, timeLeft, round, drawing, choosing } = s;
+      renderTimer(phase, timeLeft, round);
+      renderToolBar(s);
 
       if (phase === "lobby") {
         statusBar.content = s.amHost
           ? s.enoughPlayers
-            ? t`${fg("#a6e3a1")("* Lobby")}   You are the host - press ${fg("#f9e2af")("[S]")} to start the game`
-            : t`${fg("#f9e2af")("* Lobby")}   Waiting for more players... (need at least 2)`
-          : t`${fg("#89dceb")("* Lobby")}   Waiting for the host to start the game...`;
+            ? t`${fg(C.good)("* Lobby")}   You are the host - press ${fg(C.warn)("[S]")} to start`
+            : t`${fg(C.warn)("* Lobby")}   Waiting for more players... (need at least 2)`
+          : t`${fg(C.info)("* Lobby")}   Waiting for the host to start the game...`;
         return;
       }
 
       if (phase === "selecting") {
         if (choosing) {
           const choices = s.wordChoices.length
-            ? s.wordChoices
-                .map((w, i) => `[${i + 1}] ${w}`)
-                .join("   ")
+            ? s.wordChoices.map((w, i) => `[${i + 1}] ${w}`).join("   ")
             : "...";
-          statusBar.content = t`[${String(timeLeft)}s]   ${fg("#f9e2af")("Choose a word:")}   ${choices}`;
+          statusBar.content = t`${fg(C.warn)("Choose a word:")}   ${choices}`;
         } else {
-          statusBar.content = `[${timeLeft}s]   ${s.drawerName || "Someone"} is choosing a word...`;
+          statusBar.content = `${s.drawerName || "Someone"} is choosing a word...`;
         }
         return;
       }
 
       if (phase === "intermission") {
-        statusBar.content = t`${fg("#f38ba8")("* Round over")}   next turn in ${String(timeLeft)}s...`;
+        statusBar.content = t`${fg(C.bad)("* Round over")}   next turn soon...`;
         return;
       }
 
       // drawing phase
       if (drawing) {
-        const brushIcon = mode === "braille" ? "::" : "##";
-        if (erasing) {
-          statusBar.content = `R${round}  [${timeLeft}s]   YOU DRAW   ${hint}   eraser  w${size}`;
-        } else {
-          statusBar.content = t`R${String(round)}  [${String(timeLeft)}s]   YOU DRAW   ${hint}   ${brushIcon} ${fg(color)("#")}  w${String(size)}`;
-        }
+        statusBar.content = t`${fg(C.good)("R" + round)}  ${fg(C.accent)("YOU DRAW")}   ${hint}`;
       } else {
-        statusBar.content = `R${round}  [${timeLeft}s]   guessing...   ${hint}`;
+        statusBar.content = t`${fg(C.good)("R" + round)}  guessing...   ${fg(C.warn)(hint)}`;
       }
     },
+
     setRoom(code, name) {
       leftPane.title = ` ${code}${name ? "  -  " + name : ""} `;
       renderer.requestRender();
     },
+
+    showScoreboard(players, myName, reveal) {
+      const ranked = [...players].sort((a, b) => b.score - a.score);
+      const lines: StyledText[] = [];
+      if (reveal) lines.push(t`The word was ${fg(C.warn)(reveal)}`);
+      lines.push(stringToStyledText(""));
+      ranked.forEach((p, i) => {
+        const medal = i === 0 ? "#1" : i === 1 ? "#2" : i === 2 ? "#3" : `${i + 1}.`;
+        const you = p.name === myName;
+        const name = you ? `${p.name} (you)` : p.name;
+        lines.push(t`${fg(i === 0 ? C.warn : C.muted)(medal)} ${fg(p.color)(p.avatar + " " + name)}  ${fg(C.text)(String(p.score))}`);
+      });
+      scoreText.content = joinLines(lines);
+      score.layer.visible = true;
+      renderer.requestRender();
+    },
+    hideScoreboard() {
+      score.layer.visible = false;
+      renderer.requestRender();
+    },
+
+    showToast(text, color = C.good) {
+      toast.box.borderColor = color;
+      toastText.content = t`${fg(color)(text)}`;
+      toast.layer.visible = true;
+      renderer.requestRender();
+    },
+    hideToast() {
+      toast.layer.visible = false;
+      renderer.requestRender();
+    },
+
+    toggleHelp() {
+      help.layer.visible = !help.layer.visible;
+      renderer.requestRender();
+      return help.layer.visible;
+    },
+    isHelpOpen() {
+      return help.layer.visible;
+    },
+
+    setActivePane(pane) {
+      leftPane.borderColor = pane === "canvas" ? C.borderActive : C.border;
+      sidebar.setChatActive(pane === "chat");
+      renderer.requestRender();
+    },
   };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Helpers                                                                    */
+/* -------------------------------------------------------------------------- */
+
+function joinLines(lines: StyledText[]): StyledText {
+  const NL = stringToStyledText("\n").chunks;
+  const chunks: TextChunk[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    chunks.push(...lines[i]!.chunks);
+    if (i < lines.length - 1) chunks.push(...NL);
+  }
+  return new StyledText(chunks);
+}
+
+function HELP_BODY(): string {
+  return [
+    "Drawing",
+    "  b brush     n line      m rect",
+    "  v circle    f fill      e eraser",
+    "  [ ] size    1-8 color",
+    "  z undo      Z redo      c clear",
+    "  g toggle braille/block",
+    "",
+    "Game",
+    "  S start     1-3 pick word",
+    "  Tab focus chat   Enter send guess",
+    "  Ctrl+Y copy room code",
+    "  ? help      Esc leave   Ctrl+C quit",
+  ].join("\n");
 }

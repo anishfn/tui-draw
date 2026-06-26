@@ -165,10 +165,12 @@ function handlePacket(ws: ServerWebSocket<Session>, packet: Packet): void {
       const verdict = room.evaluateGuess(ws.data.id, packet.msg.content);
       if (verdict === "correct") break; // suppressed; game loop sent alert
       if (verdict === "close") {
+        // Privately nudge the guesser; don't broadcast a near-miss (it leaks).
         send(ws, {
           t: PacketType.SYSTEM_ALERT,
-          alert: { kind: "info", text: `"${packet.msg.content}" is close!` },
+          alert: { kind: "hint", text: `"${packet.msg.content}" is close!` },
         });
+        break;
       }
       room.broadcast({
         t: PacketType.CHAT_MESSAGE,

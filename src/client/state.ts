@@ -47,6 +47,8 @@ export class ClientState {
   hint = "";
   /** Populated only when we are the drawer. */
   word: string | null = null;
+  /** The turn's word, revealed to everyone during the intermission scoreboard. */
+  reveal: string | null = null;
   /** The three words offered to us while choosing (drawer-only). */
   wordChoices: string[] = [];
   timeLeft = 0;
@@ -61,10 +63,12 @@ export class ClientState {
   roomName = "";
   roomList: RoomInfo[] = [];
 
+  /** Active drawing tool (drawer-side only). */
+  tool: "brush" | "line" | "rect" | "circle" | "fill" = "brush";
   /** Current local drawing tool selection (drawer-side only). */
   drawMode: DrawMode = "braille";
-  /** Current local pen color (drawer-side only). Defaults to terminal foreground. */
-  drawColor = "#ffffff";
+  /** Current local pen color (drawer-side only). Defaults to the first palette slot. */
+  drawColor = "#e0def4";
   /** Brush radius (dots for braille, cells for block). */
   brushSize = 2;
   /** Eraser active? */
@@ -94,6 +98,7 @@ export class ClientState {
   pushAlert(alert: SystemAlertPayload): void {
     const color =
       alert.kind === "correct" ? "#a6e3a1" :
+      alert.kind === "hint"    ? "#f9e2af" :
       alert.kind === "role"    ? "#f9e2af" :
       alert.kind === "round"   ? "#f38ba8" :
       alert.kind === "tick"    ? "#89dceb" :

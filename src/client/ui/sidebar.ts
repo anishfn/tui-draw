@@ -15,6 +15,7 @@ import {
   BoxRenderable,
   InputRenderable,
   InputRenderableEvents,
+  RGBA,
   StyledText,
   TextRenderable,
   fg,
@@ -25,12 +26,19 @@ import {
 } from "@opentui/core";
 import type { FeedLine } from "../state.ts";
 import type { Player } from "../../types/index.ts";
+import { C } from "./theme.ts";
+
+export type ConnState = "connecting" | "online" | "offline";
 
 export interface SidebarHandle {
   readonly container: BoxRenderable;
   readonly input: InputRenderable;
   setPlayers(players: Player[], drawerId: string | null, myName: string): void;
   setFeed(feed: FeedLine[]): void;
+  /** Highlight the chat/guess region when it holds focus. */
+  setChatActive(active: boolean): void;
+  /** Update the connection dot in the panel title. */
+  setConnection(state: ConnState): void;
 }
 
 export interface SidebarOptions {
@@ -47,6 +55,7 @@ export function createSidebar(
     flexDirection: "column",
     border: true,
     borderStyle: "rounded",
+    borderColor: C.accent,
     title: " drawtui ",
     titleAlignment: "center",
     gap: 1,
@@ -59,6 +68,7 @@ export function createSidebar(
     flexDirection: "column",
     border: true,
     borderStyle: "rounded",
+    borderColor: C.border,
     title: " Players ",
     paddingLeft: 1,
     paddingRight: 1,
@@ -73,6 +83,7 @@ export function createSidebar(
     overflow: "hidden",
     border: true,
     borderStyle: "rounded",
+    borderColor: C.border,
     title: " Chat ",
     paddingLeft: 1,
     paddingRight: 1,
@@ -85,6 +96,7 @@ export function createSidebar(
     flexShrink: 0,
     border: true,
     borderStyle: "rounded",
+    borderColor: C.border,
     title: " Guess ",
     paddingLeft: 1,
     paddingRight: 1,
@@ -95,17 +107,9 @@ export function createSidebar(
   });
   inputBox.add(input);
 
-  /* --- Compact controls (below chat) ----------------------------------- */
-  const CONTROLS = [
-    "S start    Tab chat",
-    "b brush    e eraser",
-    "[ ] size   1-8 color",
-    "1-3 word   c clear",
-    "^Y copy    Esc leave",
-    "^C quit",
-  ].join("\n");
+  /* --- Compact controls hint (below chat) ------------------------------ */
   const controlsText = new TextRenderable(renderer, {
-    content: t`${fg("#6c7086")(CONTROLS)}`,
+    content: t`${fg(C.muted)("? keys   Tab chat   Esc leave")}`,
     flexShrink: 0,
     paddingLeft: 1,
   });
@@ -149,13 +153,32 @@ export function createSidebar(
       return;
     }
     const sorted = [...players].sort((a, b) => b.score - a.score);
-    const lines = sorted.map((p) => {
-      const pen = p.id === drawerId ? "> " : "  ";
+    const top = Math.max(1, sorted[0]!.score);
+    const lines = sorted.map((p, i) => {
+      const rank = i === 0 ? "#1" : i === 1 ? "#2" : i === 2 ? "#3" : `${i + 1}.`;
+      const pen = p.id === drawerId ? ">" : " ";
       const you = p.name === myName ? " (you)" : "";
       const check = p.hasGuessed ? " +" : "";
-      return t`${pen}${fg(p.color)(p.avatar + " " + p.name)}${you}${check}  ${String(p.score)}`;
+      const filled = Math.round((p.score / top) * 6);
+      const bar = "#".repeat(filled) + "-".repeat(6 - filled);
+      return t`${fg(i === 0 ? C.warn : C.muted)(rank)}${fg(C.accent)(pen)}${fg(p.color)(p.avatar + " " + p.name)}${you}${check}  ${fg(p.color)(bar)} ${fg(C.text)(String(p.score))}`;
     });
     playersText.content = buildLines(lines);
+  }
+
+  function setChatActive(active: boolean) {
+    const c = active ? C.borderActive : C.border;
+    feedBox.borderColor = c;
+    inputBox.borderColor = c;
+    renderer.requestRender();
+  }
+
+  function setConnection(state: ConnState) {
+    const hex =
+      state === "online" ? C.good : state === "connecting" ? C.warn : C.bad;
+    container.title = ` drawtui [${state === "online" ? "+" : state === "connecting" ? "~" : "x"}] `;
+    container.titleColor = RGBA.fromHex(hex);
+    renderer.requestRender();
   }
 
   function setFeed(feed: FeedLine[]) {
@@ -173,5 +196,5 @@ export function createSidebar(
     feedText.content = buildLines(lines);
   }
 
-  return { container, input, setPlayers, setFeed };
+  return { container, input, setPlayers, setFeed, setChatActive, setConnection };
 }

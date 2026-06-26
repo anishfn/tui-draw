@@ -46,12 +46,21 @@ const SPACE = " ";
 /** Fully transparent — lets the terminal background show through. */
 const TRANSPARENT = RGBA.fromValues(0, 0, 0, 0);
 
+export type Tool = "brush" | "line" | "rect" | "circle" | "fill";
+
 export interface CanvasHandle {
   readonly renderable: FrameBufferRenderable;
   apply(point: DrawPointPayload): void;
   replay(points: readonly DrawPointPayload[]): void;
   clear(): void;
   setInteractive(on: boolean): void;
+  /**
+   * Undo / redo the local drawer's last stroke group. Returns the full list of
+   * points that should now be on the board (so the caller can clear + rebroadcast
+   * to everyone else), or `null` when there is nothing to undo / redo.
+   */
+  undo(): DrawPointPayload[] | null;
+  redo(): DrawPointPayload[] | null;
   /** Explicitly size the canvas (cells) to fit its laid-out pane. */
   resize(width: number, height: number): void;
 }
@@ -65,6 +74,8 @@ export interface CanvasOptions {
   getSize: () => number;
   /** Whether the eraser tool is active. */
   getErase: () => boolean;
+  /** Active drawing tool (brush / shapes / fill). */
+  getTool: () => Tool;
 }
 
 export function createCanvas(
@@ -90,6 +101,15 @@ export function createCanvas(
   let lastLocal: { x: number; y: number } | null = null;
   let lastRemote: { x: number; y: number } | null = null;
 
+  // Undo/redo: the local drawer's committed work, grouped per stroke/shape/fill.
+  let groups: DrawPointPayload[][] = [];
+  let redoStack: DrawPointPayload[][] = [];
+  let currentGroup: DrawPointPayload[] = [];
+  // Shape tools anchor on mouse-down and preview until release.
+  let shapeAnchor: { cx: number; cy: number } | null = null;
+  // Brush footprint preview under the cursor.
+  let hover: { cx: number; cy: number } | null = null;
+
   const fb = new FrameBufferRenderable(renderer, {
     width: cols,
     height: rows,
@@ -101,15 +121,39 @@ export function createCanvas(
     },
     onMouseDown(event: MouseEvent) {
       if (!interactive) return;
-      lastLocal = null;
-      paintLocal(event, false);
+      const c = rawCell(event);
+      if (!inRange(c)) return;
+      const tool = opts.getTool();
+      if (tool === "fill") { doFill(c.cx, c.cy); return; }
+      if (tool === "brush") { lastLocal = null; currentGroup = []; paintLocal(event, false); return; }
+      shapeAnchor = c;
+      renderPreviewShape(c, c);
     },
     onMouseDrag(event: MouseEvent) {
       if (!interactive) return;
-      paintLocal(event, true);
+      if (opts.getTool() === "brush") { paintLocal(event, true); return; }
+      if (shapeAnchor) renderPreviewShape(shapeAnchor, clampCell(rawCell(event)));
     },
-    onMouseUp() {
-      lastLocal = null;
+    onMouseUp(event: MouseEvent) {
+      if (!interactive) return;
+      finishStroke(event);
+    },
+    onMouseDragEnd(event: MouseEvent) {
+      if (!interactive) return;
+      finishStroke(event);
+    },
+    onMouseMove(event: MouseEvent) {
+      if (!interactive || shapeAnchor) return;
+      if (opts.getTool() !== "brush") return;
+      const c = rawCell(event);
+      const next = inRange(c) ? c : null;
+      // Only repaint when the cursor crosses into a new cell.
+      if (next?.cx === hover?.cx && next?.cy === hover?.cy) return;
+      hover = next;
+      renderHover();
+    },
+    onMouseOut() {
+      if (hover) { hover = null; if (interactive) redrawAll(); }
     },
   });
 
@@ -338,36 +382,203 @@ export function createCanvas(
   /* Local pointer → sample                                                */
   /* --------------------------------------------------------------------- */
 
+  /* --- Cell helpers ----------------------------------------------------- */
+
+  function rawCell(event: MouseEvent): { cx: number; cy: number } {
+    return { cx: Math.floor(event.x - fb.x), cy: Math.floor(event.y - fb.y) };
+  }
+  function inRange(c: { cx: number; cy: number }): boolean {
+    return c.cx >= 0 && c.cy >= 0 && c.cx < cols && c.cy < rows;
+  }
+  function clampCell(c: { cx: number; cy: number }): { cx: number; cy: number } {
+    return {
+      cx: Math.min(cols - 1, Math.max(0, c.cx)),
+      cy: Math.min(rows - 1, Math.max(0, c.cy)),
+    };
+  }
+
+  /**
+   * Build a resolution- and aspect-independent wire payload from a cell.
+   * Position is normalized to [0,1); `ar` carries our dot-space aspect; the brush
+   * radius is normalized to a fraction of canvas height in dots, so receivers
+   * letterbox by `ar` and the drawing keeps its shape everywhere.
+   */
+  function makePoint(
+    cx: number, cy: number, mode: DrawMode, realSize: number,
+    color: Color, erase: boolean, drag: boolean,
+  ): DrawPointPayload {
+    const realDots = mode === "block" ? realSize * 4 : realSize;
+    return { x: cx / cols, y: cy / rows, ar: dotW / dotH, color, mode, size: realDots / dotH, erase, drag };
+  }
+
   function paintLocal(event: MouseEvent, drag: boolean): void {
-    const cx = Math.floor(event.x - fb.x);
-    const cy = Math.floor(event.y - fb.y);
-    if (cx < 0 || cy < 0 || cx >= cols || cy >= rows) return;
+    const c = rawCell(event);
+    if (!inRange(c)) return;
 
     const mode = opts.getMode();
     const realSize = Math.max(1, Math.floor(opts.getSize()));
     const color = opts.getColor();
     const erase = opts.getErase();
 
-    // Wire format is resolution- and aspect-independent: position is normalized
-    // to [0,1) across this canvas, `ar` carries our dot-space aspect ratio, and
-    // the brush radius is normalized to a fraction of canvas height in dots.
-    // Receivers letterbox by `ar` so the drawing keeps its shape everywhere.
-    const realDots = mode === "block" ? realSize * 4 : realSize;
-    const point: DrawPointPayload = {
-      x: cx / cols,
-      y: cy / rows,
-      ar: dotW / dotH,
-      color,
-      mode,
-      size: realDots / dotH,
-      erase,
-      drag,
-    };
-
     // Render our own stroke at full local resolution for crisp feedback.
-    flush(stamp(cx, cy, drag ? lastLocal : null, { color, mode, size: realSize, erase }));
-    lastLocal = { x: cx, y: cy };
+    flush(stamp(c.cx, c.cy, drag ? lastLocal : null, { color, mode, size: realSize, erase }));
+    lastLocal = { x: c.cx, y: c.cy };
+    const point = makePoint(c.cx, c.cy, mode, realSize, color, erase, drag);
     opts.onDraw(point);
+    currentGroup.push(point);
+  }
+
+  /* --- Stroke commit (brush / shapes) ----------------------------------- */
+
+  function finishStroke(event: MouseEvent): void {
+    const tool = opts.getTool();
+    if (tool === "brush") {
+      if (currentGroup.length) { groups.push(currentGroup); currentGroup = []; redoStack = []; }
+      lastLocal = null;
+      return;
+    }
+    if (shapeAnchor) {
+      commitShape(tool, shapeAnchor, clampCell(rawCell(event)));
+      shapeAnchor = null;
+    }
+  }
+
+  function commitShape(tool: Tool, a: { cx: number; cy: number }, b: { cx: number; cy: number }): void {
+    const cells = shapeCells(tool, a, b);
+    const mode = opts.getMode();
+    const realSize = Math.max(1, Math.floor(opts.getSize()));
+    const color = opts.getColor();
+    const erase = opts.getErase();
+    currentGroup = [];
+    for (const cell of cells) {
+      stamp(cell.cx, cell.cy, null, { color, mode, size: realSize, erase });
+      const p = makePoint(cell.cx, cell.cy, mode, realSize, color, erase, false);
+      opts.onDraw(p);
+      currentGroup.push(p);
+    }
+    if (currentGroup.length) { groups.push(currentGroup); currentGroup = []; redoStack = []; }
+    redrawAll();
+  }
+
+  /** Compute the set of cells outlining a shape between two corners. */
+  function shapeCells(tool: Tool, a: { cx: number; cy: number }, b: { cx: number; cy: number }): { cx: number; cy: number }[] {
+    if (tool === "line") {
+      const out: { cx: number; cy: number }[] = [];
+      lineCells(a.cx, a.cy, b.cx, b.cy, (x, y) => out.push({ cx: x, cy: y }));
+      return out;
+    }
+    const x0 = Math.min(a.cx, b.cx), x1 = Math.max(a.cx, b.cx);
+    const y0 = Math.min(a.cy, b.cy), y1 = Math.max(a.cy, b.cy);
+    const seen = new Set<number>();
+    const out: { cx: number; cy: number }[] = [];
+    const add = (x: number, y: number) => {
+      const k = y * cols + x;
+      if (x < 0 || y < 0 || x >= cols || y >= rows || seen.has(k)) return;
+      seen.add(k); out.push({ cx: x, cy: y });
+    };
+    if (tool === "rect") {
+      for (let x = x0; x <= x1; x++) { add(x, y0); add(x, y1); }
+      for (let y = y0; y <= y1; y++) { add(x0, y); add(x1, y); }
+      return out;
+    }
+    // circle / ellipse inscribed in the bounding box
+    const cxC = (x0 + x1) / 2, cyC = (y0 + y1) / 2;
+    const rx = (x1 - x0) / 2, ry = (y1 - y0) / 2;
+    const steps = Math.max(12, Math.round((rx + ry) * 4));
+    for (let i = 0; i < steps; i++) {
+      const ang = (i / steps) * Math.PI * 2;
+      add(Math.round(cxC + rx * Math.cos(ang)), Math.round(cyC + ry * Math.sin(ang)));
+    }
+    return out;
+  }
+
+  /* --- Flood fill ------------------------------------------------------- */
+
+  function isInked(x: number, y: number): boolean {
+    const idx = y * cols + x;
+    if (block[idx]) return true;
+    const bx = x * 2, by = y * 4;
+    for (let dy = 0; dy < 4; dy++) {
+      const row = (by + dy) * dotW;
+      if (dots[row + bx] || dots[row + bx + 1]) return true;
+    }
+    return false;
+  }
+
+  function doFill(sx: number, sy: number): void {
+    const hex = opts.getColor();
+    const ink = RGBA.fromHex(hex);
+    const target = isInked(sx, sy);
+    const CAP = 4000;
+    const seen = new Set<number>();
+    const filled: number[] = [];
+    const stack: [number, number][] = [[sx, sy]];
+    while (stack.length) {
+      const [x, y] = stack.pop()!;
+      if (x < 0 || y < 0 || x >= cols || y >= rows) continue;
+      const idx = y * cols + x;
+      if (seen.has(idx)) continue;
+      seen.add(idx);
+      if (isInked(x, y) !== target) continue;
+      filled.push(idx);
+      if (filled.length > CAP) return; // region too large — bail without filling
+      stack.push([x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]);
+    }
+    currentGroup = [];
+    for (const idx of filled) {
+      const x = idx % cols, y = (idx / cols) | 0;
+      block[idx] = 1;
+      color[idx] = ink;
+      const p = makePoint(x, y, "block", 1, hex, false, false);
+      p.size = 0; // single-cell block stamp on receivers
+      opts.onDraw(p);
+      currentGroup.push(p);
+    }
+    if (currentGroup.length) { groups.push(currentGroup); currentGroup = []; redoStack = []; }
+    redrawAll();
+  }
+
+  /* --- Previews --------------------------------------------------------- */
+
+  function renderPreviewShape(a: { cx: number; cy: number }, b: { cx: number; cy: number }): void {
+    redrawAll();
+    const ink = RGBA.fromHex(opts.getColor());
+    for (const c of shapeCells(opts.getTool(), a, b)) {
+      if (c.cx < 0 || c.cy < 0 || c.cx >= cols || c.cy >= rows) continue;
+      fb.frameBuffer.setCell(c.cx, c.cy, SOLID_BLOCK, ink, TRANSPARENT);
+    }
+    renderer.requestRender();
+  }
+
+  function renderHover(): void {
+    redrawAll();
+    if (!hover) return;
+    const ink = RGBA.fromHex(opts.getColor());
+    fb.frameBuffer.setCell(hover.cx, hover.cy, SOLID_BLOCK, ink, TRANSPARENT);
+    renderer.requestRender();
+  }
+
+  /* --- Undo / redo ------------------------------------------------------ */
+
+  function rebuildFromGroups(): void {
+    wipe();
+    lastRemote = null;
+    lastLocal = null;
+    for (const g of groups) {
+      let from: { x: number; y: number } | null = null;
+      for (const p of g) {
+        const { cx, cy, size } = localFromPayload(p);
+        stamp(cx, cy, p.drag ? from : null, { color: p.color, mode: p.mode, size, erase: p.erase });
+        from = { x: cx, y: cy };
+      }
+    }
+    redrawAll();
+  }
+
+  function flatten(): DrawPointPayload[] {
+    const out: DrawPointPayload[] = [];
+    for (const g of groups) out.push(...g);
+    return out;
   }
 
   /**
@@ -425,6 +636,9 @@ export function createCanvas(
     replay(points) {
       wipe();
       lastRemote = null;
+      groups = [];
+      redoStack = [];
+      currentGroup = [];
       for (const p of points) {
         const { cx, cy, size } = localFromPayload(p);
         stamp(cx, cy, p.drag ? lastRemote : null, {
@@ -442,12 +656,30 @@ export function createCanvas(
       wipe();
       lastLocal = null;
       lastRemote = null;
+      groups = [];
+      redoStack = [];
+      currentGroup = [];
+      shapeAnchor = null;
       redrawAll();
+    },
+
+    undo() {
+      if (!groups.length) return null;
+      redoStack.push(groups.pop()!);
+      rebuildFromGroups();
+      return flatten();
+    },
+
+    redo() {
+      if (!redoStack.length) return null;
+      groups.push(redoStack.pop()!);
+      rebuildFromGroups();
+      return flatten();
     },
 
     setInteractive(on) {
       interactive = on;
-      if (!on) lastLocal = null;
+      if (!on) { lastLocal = null; hover = null; shapeAnchor = null; }
     },
 
     resize(width, height) {

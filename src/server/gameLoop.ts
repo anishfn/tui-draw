@@ -92,6 +92,8 @@ export class GameLoop {
   private ticker: ReturnType<typeof setInterval> | null = null;
   private usedAvatars = new Set<string>();
   private colorCursor = 0;
+  /** Shuffled letter indices, revealed one-by-one as the turn timer drains. */
+  private revealOrder: number[] = [];
 
   constructor(private readonly hooks: GameLoopHooks) {}
 
@@ -301,6 +303,7 @@ export class GameLoop {
       hostId: this.hostId,
       hint: this.maskedHint(),
       word: this.phase === "drawing" && forId !== null && forId === this.drawerId ? this.word : null,
+      reveal: this.phase === "intermission" ? this.word : null,
       timeLeft: this.timeLeft,
       round: this.round,
       history: this.history,
@@ -392,6 +395,7 @@ export class GameLoop {
   private beginDrawing(word: string): void {
     this.word = word;
     this.choices = [];
+    this.revealOrder = this.shuffledLetterIndices(word);
     this.phase = "drawing";
     this.timeLeft = TURN_SECONDS;
     this.clearHistory();
@@ -459,13 +463,40 @@ export class GameLoop {
     return PLAYER_COLORS[idx] ?? ("#ffffff" as Color);
   }
 
-  /** Produce the spaced, masked hint shown to guessers, e.g. "_ A _ _ E R". */
+  /**
+   * Produce the spaced, masked hint shown to guessers, e.g. "_ A _ _ E R".
+   * Letters are progressively revealed (up to half the word) as the turn timer
+   * drains, so a stalled round still nudges guessers toward the answer.
+   */
   private maskedHint(): string {
     if (!this.word || this.phase !== "drawing") return "";
+    const shown = new Set(this.revealOrder.slice(0, this.revealCount()));
     return this.word
       .split("")
-      .map((ch) => (ch === " " ? " " : "_"))
+      .map((ch, i) => (ch === " " ? " " : shown.has(i) ? ch.toUpperCase() : "_"))
       .join(" ");
+  }
+
+  /** How many letters are currently revealed, scaling with elapsed turn time. */
+  private revealCount(): number {
+    const max = this.revealOrder.length; // already capped at half the letters
+    if (max === 0) return 0;
+    const elapsed = 1 - this.timeLeft / TURN_SECONDS;
+    return Math.max(0, Math.min(max, Math.floor(elapsed * (max + 1))));
+  }
+
+  /** A shuffled list of letter (non-space) indices, capped at half the word. */
+  private shuffledLetterIndices(word: string): number[] {
+    const idx = word
+      .split("")
+      .map((ch, i) => (ch === " " ? -1 : i))
+      .filter((i) => i >= 0);
+    // Fisher-Yates shuffle.
+    for (let i = idx.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [idx[i], idx[j]] = [idx[j]!, idx[i]!];
+    }
+    return idx.slice(0, Math.floor(idx.length / 2));
   }
 
   /** Cheap Levenshtein-≤1 check used to nudge "so close" guesses. */

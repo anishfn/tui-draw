@@ -136,6 +136,8 @@ export interface GameSnapshot {
   hint: string;
   /** Whole word — only ever populated for the drawer's own snapshot. */
   word: string | null;
+  /** The turn's word, revealed to everyone during the intermission scoreboard. */
+  reveal: string | null;
   /** Seconds remaining in the current turn / selection window. */
   timeLeft: number;
   /** Current round number (1-based). */
