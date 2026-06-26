@@ -269,4 +269,4 @@ export const DEFAULT_PORT = 3017;
  * host's own local testing), but normal users never need to touch it — running
  * `drawtui` just connects here.
  */
-export const DEFAULT_SERVER_URL = "wss://tui-draw.up.railway.app";
+export const DEFAULT_SERVER_URL = "ws://drawtui.anishfn.space:3017";
