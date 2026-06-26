@@ -262,8 +262,8 @@ export function createDashboard(
         const rounds = `rounds ${s.totalRounds}`;
         statusBar.content = s.amHost
           ? s.enoughPlayers
-            ? t`${fg(C.good)("* Lobby")}   ${fg(C.text)(rounds)} ${fg(C.muted)("([ ] change)")}   press ${fg(C.warn)("[S]")} to start`
-            : t`${fg(C.warn)("* Lobby")}   ${fg(C.text)(rounds)} ${fg(C.muted)("([ ] change)")}   need 2+ players...`
+            ? t`${fg(C.good)("* Lobby")}   ${fg(C.text)(rounds)} ${fg(C.muted)("(< > change)")}   press ${fg(C.warn)("[S]")} to start`
+            : t`${fg(C.warn)("* Lobby")}   ${fg(C.text)(rounds)} ${fg(C.muted)("(< > change)")}   need 2+ players...`
           : t`${fg(C.info)("* Lobby")}   ${fg(C.text)(rounds)}   waiting for the host to start...`;
         return;
       }

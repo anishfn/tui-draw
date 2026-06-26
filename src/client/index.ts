@@ -417,9 +417,13 @@ export async function startClient(config: ClientConfig = {}): Promise<void> {
     // Lobby phase: the host starts the game with [S].
     if (state.phase === "lobby") {
       if (key.name === "s" && state.amHost) send({ t: PacketType.START_GAME });
-      if (state.amHost && (key.name === "[" || key.name === "]")) {
-        const next = state.totalRounds + (key.name === "]" ? 1 : -1);
-        send({ t: PacketType.SET_ROUNDS, rounds: Math.max(1, Math.min(10, next)) });
+      if (state.amHost) {
+        const dec = key.name === "<" || key.sequence === "<" || (key.shift && key.name === ",");
+        const inc = key.name === ">" || key.sequence === ">" || (key.shift && key.name === ".");
+        if (dec || inc) {
+          const next = state.totalRounds + (inc ? 1 : -1);
+          send({ t: PacketType.SET_ROUNDS, rounds: Math.max(1, Math.min(10, next)) });
+        }
       }
       return;
     }
