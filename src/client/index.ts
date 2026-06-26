@@ -414,7 +414,26 @@ export async function startClient(config: ClientConfig = {}): Promise<void> {
       return;
     }
 
-    // Lobby phase: the host starts the game with [S].
+    // Focus toggle, help, and chat work in EVERY phase (even the lobby).
+    if (key.name === "tab") {
+      inputFocused = !inputFocused;
+      if (inputFocused) dash.sidebar.input.focus();
+      else dash.sidebar.input.blur();
+      updateActivePane();
+      renderer.requestRender();
+      return;
+    }
+
+    // Help overlay can be opened any time (outside the chat input).
+    if (!inputFocused && (key.name === "?" || key.sequence === "?")) {
+      dash.toggleHelp();
+      return;
+    }
+
+    // While typing a guess/chat, let the input consume everything else.
+    if (inputFocused) return;
+
+    // Lobby phase: the host starts the game and sets the round count.
     if (state.phase === "lobby") {
       if (key.name === "s" && state.amHost) send({ t: PacketType.START_GAME });
       if (state.amHost) {
@@ -438,23 +457,6 @@ export async function startClient(config: ClientConfig = {}): Promise<void> {
       }
       return;
     }
-
-    if (key.name === "tab") {
-      inputFocused = !inputFocused;
-      if (inputFocused) dash.sidebar.input.focus();
-      else dash.sidebar.input.blur();
-      updateActivePane();
-      renderer.requestRender();
-      return;
-    }
-
-    // Help overlay can be opened any time (outside the chat input).
-    if (!inputFocused && (key.name === "?" || key.sequence === "?")) {
-      dash.toggleHelp();
-      return;
-    }
-
-    if (inputFocused) return;
 
     switch (key.name) {
       case "b": state.tool = "brush"; state.erasing = false; state.emitChange(); break;
