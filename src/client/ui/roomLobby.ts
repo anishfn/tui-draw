@@ -76,7 +76,7 @@ export function createRoomLobby(
 
   /* --- Right panel: create + join forms ------------------------------- */
   const rightPanel = new BoxRenderable(renderer, {
-    width: 36,
+    width: 44,
     flexShrink: 0,
     flexDirection: "column",
     gap: 1,
