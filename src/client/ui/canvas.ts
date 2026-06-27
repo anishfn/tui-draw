@@ -41,7 +41,10 @@ const BRAILLE_BITS: readonly [number, number][] = [
   [0x40, 0x80],
 ];
 
-const SOLID_BLOCK = "█";
+// ASCII fill: opentui's framebuffer mis-encodes non-ASCII glyphs (the solid
+// `█` shows up as `a^`/`â` mojibake in some terminals), so the block brush
+// paints with a plain `#` that renders identically everywhere.
+const SOLID_BLOCK = "#";
 const SPACE = " ";
 /** Fully transparent — lets the terminal background show through. */
 const TRANSPARENT = RGBA.fromValues(0, 0, 0, 0);

@@ -47,7 +47,6 @@ export async function startClient(config: ClientConfig = {}): Promise<void> {
   state.myName = MY_NAME;
 
   let ws: WebSocket | null = null;
-  let inputFocused = true;
   let autoActionFired = false;
   // Chat lines we've already shown locally (optimistic echo). The server
   // broadcasts our own messages back to us, so we de-dupe that echo here.
@@ -152,8 +151,21 @@ export async function startClient(config: ClientConfig = {}): Promise<void> {
     toastTimer = setTimeout(() => dash.hideToast(), 1800);
   };
 
+  // The chat input's *own* focus state is the single source of truth for "is
+  // the user typing?" — never a parallel boolean, which drifts out of sync and
+  // lets number/`c` keys both type into chat AND fire drawing shortcuts.
+  const chatFocused = (): boolean => dash.sidebar.input.focused;
+
   const updateActivePane = (): void => {
-    dash.setActivePane(inputFocused ? "chat" : "canvas");
+    dash.setActivePane(chatFocused() ? "chat" : "canvas");
+  };
+
+  /** Focus or blur the chat input (idempotent) and resync the active pane. */
+  const setChatFocus = (on: boolean): void => {
+    if (on && !dash.sidebar.input.focused) dash.sidebar.input.focus();
+    else if (!on && dash.sidebar.input.focused) dash.sidebar.input.blur();
+    updateActivePane();
+    renderer.requestRender();
   };
 
   /* --- Phase switching --------------------------------------------------- */
@@ -221,17 +233,18 @@ export async function startClient(config: ClientConfig = {}): Promise<void> {
   let firstSync = true;
   let prevDrawerId: string | null = null;
   let prevRound = -1;
-  let prevWantInput = true;
+  // `null` (not `true`) so the *first* sync always applies focus instead of
+  // assuming the input is already in the right state.
+  let prevWantInput: boolean | null = null;
 
   // The chat input should hold focus only when we can usefully type into it:
   // while guessing during a drawing turn, or during the intermission scoreboard.
+  // We only auto-toggle when the *desired* state changes, so a manual Tab
+  // override persists until the phase actually moves on.
   const applyFocus = (wantInput: boolean): void => {
     if (wantInput === prevWantInput) return;
     prevWantInput = wantInput;
-    inputFocused = wantInput;
-    if (wantInput) dash.sidebar.input.focus();
-    else dash.sidebar.input.blur();
-    updateActivePane();
+    setChatFocus(wantInput);
   };
 
   const onPacket = (packet: Packet): void => {
@@ -257,7 +270,7 @@ export async function startClient(config: ClientConfig = {}): Promise<void> {
         firstSync = true;
         prevDrawerId = null;
         prevRound = -1;
-        prevWantInput = true;
+        prevWantInput = null;
         dash.setRoom(packet.roomId, packet.roomName, state.roomPassword);
         switchToGame();
         break;
@@ -435,22 +448,18 @@ export async function startClient(config: ClientConfig = {}): Promise<void> {
 
     // Focus toggle, help, and chat work in EVERY phase (even the lobby).
     if (key.name === "tab") {
-      inputFocused = !inputFocused;
-      if (inputFocused) dash.sidebar.input.focus();
-      else dash.sidebar.input.blur();
-      updateActivePane();
-      renderer.requestRender();
+      setChatFocus(!chatFocused());
       return;
     }
 
     // Help overlay can be opened any time (outside the chat input).
-    if (!inputFocused && (key.name === "?" || key.sequence === "?")) {
+    if (!chatFocused() && (key.name === "?" || key.sequence === "?")) {
       dash.toggleHelp();
       return;
     }
 
     // While typing a guess/chat, let the input consume everything else.
-    if (inputFocused) return;
+    if (chatFocused()) return;
 
     // Lobby phase: the host starts the game and sets the round count.
     if (state.phase === "lobby") {

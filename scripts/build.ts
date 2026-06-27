@@ -3,24 +3,27 @@
  * scripts/build.ts
  * --------------------------------------------------------------------------
  * Produces the published `bin` so `drawtui` can be launched from ANY package
- * manager / runtime (npm, pnpm, yarn, npx, bun, bunx) — even though the actual
- * terminal renderer only works under Bun.
+ * manager / runtime (npm, pnpm, yarn, npx, bun, bunx) — and runs natively on
+ * Node, so users who already have Node don't need to install Bun.
  *
  * Why a launcher instead of a plain bundle:
  *   @opentui/core renders through a native core reached over FFI. Under Bun
- *   that's `bun:ffi`; under Node it needs `node:ffi`, which stock Node does not
- *   ship — so the renderer simply cannot initialize on Node. Pointing the bin
- *   straight at JS with a `node` shebang therefore *runs* under Node but dies
- *   with "OpenTUI native FFI is not available for this runtime yet".
+ *   that's `bun:ffi`; under Node it's the experimental `node:ffi` backend,
+ *   which only exists when Node is started with `--experimental-ffi` (Node
+ *   26.3+; some 26.x builds ship it early). That flag must be set at startup
+ *   and can't be enabled afterwards, so the bin can't simply `import` the
+ *   client — it has to re-exec Node with the flag.
  *
  * So we emit two files:
  *   • dist/client.js — the real CLI (src/cli.ts bundled to plain JS).
- *   • dist/cli.js    — a tiny Node-shebang launcher (the bin). If it's already
- *     running under Bun it imports the client in-process; otherwise it re-execs
- *     the client under `bun`, and if Bun isn't installed prints how to get it.
+ *   • dist/cli.js    — a tiny Node-shebang launcher (the bin). It picks a
+ *     runtime in this order:
+ *       1. already under Bun (bunx) → import the client in-process,
+ *       2. Node with node:ffi available → re-exec `node --experimental-ffi`,
+ *       3. otherwise → fall back to Bun if installed, else explain the options.
  *
- * This makes `npx drawtui` and a global npm install work transparently
- * whenever Bun is present, instead of failing with an opaque native error.
+ * The result: `npx drawtui` / a global npm install run on Node alone, and only
+ * old-Node-without-Bun setups are ever asked to upgrade Node or install Bun.
  * -------------------------------------------------------------------------- */
 
 import { chmod } from "node:fs/promises";
@@ -61,31 +64,51 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const clientPath = fileURLToPath(new URL("./client.js", import.meta.url));
+const args = process.argv.slice(2);
+const isBun = typeof process !== "undefined" && process.versions && process.versions.bun;
 
-// Already under Bun (e.g. \`bunx\`)? Run the client in-process — its native
-// renderer can reach bun:ffi directly.
-if (typeof process !== "undefined" && process.versions && process.versions.bun) {
+if (isBun) {
+  // Already under Bun (e.g. \`bunx\`): the native renderer reaches bun:ffi
+  // directly, so just run the client in this process.
   await import("./client.js");
 } else {
-  // Under Node/npm/pnpm/yarn the OpenTUI renderer can't initialize (no
-  // node:ffi), so re-exec the client under Bun.
-  const res = spawnSync("bun", [clientPath, ...process.argv.slice(2)], {
-    stdio: "inherit",
-  });
-  if (res.error) {
-    if (res.error.code === "ENOENT") {
-      console.error(
-        "drawtui renders its terminal UI through Bun's native FFI, which isn't\\n" +
-          "available on Node yet — so it needs Bun installed to run.\\n\\n" +
-          "Install Bun (one line), then run drawtui again:\\n" +
-          "  curl -fsSL https://bun.sh/install | bash\\n\\n" +
-          "More options: https://bun.sh/docs/installation",
-      );
-      process.exit(1);
+  // Under Node the renderer needs the experimental node:ffi backend, which only
+  // exists when Node is started with --experimental-ffi. A startup flag can't be
+  // added after boot, so probe whether this Node supports it, then re-exec this
+  // same Node binary with the flag set.
+  const nodeHasFfi =
+    spawnSync(process.execPath, ["--experimental-ffi", "-e", "require('node:ffi')"], {
+      stdio: "ignore",
+    }).status === 0;
+
+  if (nodeHasFfi) {
+    const res = spawnSync(
+      process.execPath,
+      ["--experimental-ffi", "--disable-warning=ExperimentalWarning", clientPath, ...args],
+      { stdio: "inherit" },
+    );
+    if (res.error) throw res.error;
+    process.exit(res.status ?? 0);
+  } else {
+    // This Node is too old for node:ffi — fall back to Bun if it's installed.
+    const res = spawnSync("bun", [clientPath, ...args], { stdio: "inherit" });
+    if (res.error) {
+      if (res.error.code === "ENOENT") {
+        console.error(
+          "drawtui renders its terminal UI through a native core over FFI, which\\n" +
+            "needs one of:\\n" +
+            "  - Node.js 26.3+ (it's launched automatically with --experimental-ffi), or\\n" +
+            "  - Bun.\\n\\n" +
+            "Your Node.js (v" + process.versions.node + ") is too old for node:ffi.\\n" +
+            "Upgrade Node from https://nodejs.org, or install Bun:\\n" +
+            "  curl -fsSL https://bun.sh/install | bash\\n",
+        );
+        process.exit(1);
+      }
+      throw res.error;
     }
-    throw res.error;
+    process.exit(res.status ?? 0);
   }
-  process.exit(res.status ?? 0);
 }
 `;
 

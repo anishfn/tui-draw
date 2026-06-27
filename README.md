@@ -5,24 +5,29 @@ terminal — think *Skribbl.io*, rendered as a fast native TUI.
 
 ## Requirements
 
-- **[Bun](https://bun.sh) ≥ 1.1** — the terminal renderer uses Bun's native FFI,
-  so Bun must be installed even if you launch via npm/npx
-- A terminal that supports mouse events (most modern ones do)
+The terminal renderer uses a native core over FFI, so you need **one** of:
+
+- **[Node.js](https://nodejs.org) ≥ 26.3** — uses Node's `node:ffi` (drawtui
+  launches it with `--experimental-ffi` for you), or
+- **[Bun](https://bun.sh) ≥ 1.1** — uses Bun's native FFI.
+
+Plus a terminal that supports mouse events (most modern ones do).
 
 ## Usage
 
-Just run the client — it connects to the hosted game server automatically. You
-can launch it from npm or Bun; either way it runs under Bun:
+Just run the client — it connects to the hosted game server automatically. It
+runs on whichever runtime you launch it with (Node 26.3+ or Bun), no extra
+install needed:
 
 ```bash
+npx drawtui Alice    # via npm/Node — runs on node:ffi
 bunx drawtui Alice   # via Bun
-npx drawtui Alice    # via npm — re-execs under Bun automatically
 ```
 
 Prefer a permanent `drawtui` command? Install it globally:
 
 ```bash
-bun add -g drawtui   # or: npm install -g drawtui
+npm install -g drawtui   # or: bun add -g drawtui
 drawtui Alice
 ```
 

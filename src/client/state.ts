@@ -72,10 +72,11 @@ export class ClientState {
   /**
    * Current local drawing tool selection (drawer-side only).
    *
-   * Defaults to `block`: its glyph is the solid `█`, which is the one non-ASCII
-   * character that renders reliably everywhere (see the canvas framebuffer path).
-   * Braille (`g` to toggle) gives 8x the resolution but its U+28xx glyphs depend
-   * on terminal/font support and show as mojibake (e.g. `a^`) where it's missing.
+   * Defaults to `block`: its glyph is a plain ASCII `#`, which renders reliably
+   * everywhere (opentui's framebuffer mis-encodes non-ASCII glyphs, so even the
+   * solid `█` showed up as `a^` mojibake). Braille (`g` to toggle) gives 8x the
+   * resolution but its U+28xx glyphs hit the same mojibake path, so it's only
+   * usable on terminals where opentui renders non-ASCII correctly.
    */
   drawMode: DrawMode = "block";
   /** Current local pen color (drawer-side only). Defaults to the first palette slot. */
