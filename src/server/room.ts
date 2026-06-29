@@ -21,7 +21,7 @@ export class Room {
   readonly clients = new Map<string, ServerWebSocket<Session>>();
   private readonly game: GameLoop;
 
-  constructor(id: string, name: string, password?: string, isPrivate = false) {
+  constructor(id: string, name: string, password?: string, isPrivate = false, rounds = 3) {
     this.id = id;
     this.name = name;
     this.password = password && password.length > 0 ? password : null;
@@ -43,7 +43,7 @@ export class Room {
           }
         }
       },
-    });
+    }, rounds);
     this.game.start();
   }
 

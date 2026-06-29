@@ -47,12 +47,19 @@ const TURN_SECONDS = 80;
 const SELECT_SECONDS = 15;
 /** Pause between turns so players can read the scoreboard. */
 const INTERMISSION_SECONDS = 5;
+/** How long the final match leaderboard stays up before returning to lobby. */
+const GAMEOVER_SECONDS = 12;
 /** Points awarded to the drawer each time someone guesses correctly. */
 const DRAWER_REWARD = 25;
 /** How many words the drawer chooses between at the start of a turn. */
 const WORD_CHOICE_COUNT = 3;
 /** Minimum players required before the host may start the game. */
 export const MIN_PLAYERS_TO_START = 2;
+/** Clamp a requested round count to the supported 1..10 range. */
+function clampRounds(rounds: number): number {
+  if (!Number.isFinite(rounds)) return 3;
+  return Math.max(1, Math.min(10, Math.round(rounds)));
+}
 
 /**
  * The internal player record. Mirrors the public {@link Player} but also tracks
@@ -96,8 +103,12 @@ export class GameLoop {
   private colorCursor = 0;
   /** Shuffled letter indices, revealed one-by-one as the turn timer drains. */
   private revealOrder: number[] = [];
+  /** True while the final results leaderboard is on screen (intermission phase). */
+  private gameOver = false;
 
-  constructor(private readonly hooks: GameLoopHooks) {}
+  constructor(private readonly hooks: GameLoopHooks, initialRounds = 3) {
+    this.totalRounds = clampRounds(initialRounds);
+  }
 
   /* ----------------------------------------------------------------------- */
   /* Lifecycle                                                               */
@@ -207,6 +218,7 @@ export class GameLoop {
     for (const p of this.players.values()) p.score = 0;
     this.round = 0;
     this.rotationCursor = 0;
+    this.gameOver = false;
     this.beginSelection();
   }
 
@@ -318,10 +330,11 @@ export class GameLoop {
       hostId: this.hostId,
       hint: this.maskedHint(),
       word: this.phase === "drawing" && forId !== null && forId === this.drawerId ? this.word : null,
-      reveal: this.phase === "intermission" ? this.word : null,
+      reveal: this.phase === "intermission" && !this.gameOver ? this.word : null,
       timeLeft: this.timeLeft,
       round: this.round,
       totalRounds: this.totalRounds,
+      gameOver: this.gameOver,
       history: this.history,
     };
   }
@@ -356,8 +369,18 @@ export class GameLoop {
       this.hooks.broadcastSnapshot();
     } else if (this.phase === "intermission") {
       this.timeLeft -= 1;
-      if (this.timeLeft <= 0) this.beginSelection();
-      else this.hooks.broadcastSnapshot();
+      if (this.timeLeft <= 0) {
+        // The final leaderboard returns everyone to the lobby; a normal
+        // intermission advances to the next drawer's word selection.
+        if (this.gameOver) {
+          this.gameOver = false;
+          this.gotoLobby();
+        } else {
+          this.beginSelection();
+        }
+      } else {
+        this.hooks.broadcastSnapshot();
+      }
     }
   }
 
@@ -442,7 +465,11 @@ export class GameLoop {
     this.hooks.broadcastSnapshot();
   }
 
-  /** Announce the winner and return everyone to the lobby for a rematch. */
+  /**
+   * Announce the winner and show the final leaderboard. We linger on a
+   * game-over intermission (rather than dropping straight to the lobby) so
+   * everyone can see the full ranking before the next tick returns them.
+   */
   private endGame(): void {
     const ranked = [...this.players.values()].sort((a, b) => b.score - a.score);
     const winner = ranked[0];
@@ -452,11 +479,20 @@ export class GameLoop {
         ? `Game over! ${winner.name} wins with ${winner.score} points!`
         : "Game over!",
     });
-    this.gotoLobby();
+    this.gameOver = true;
+    this.phase = "intermission";
+    this.drawerId = null;
+    this.word = null;
+    this.choices = [];
+    this.timeLeft = GAMEOVER_SECONDS;
+    this.clearHistory();
+    this.hooks.broadcastClear();
+    this.hooks.broadcastSnapshot();
   }
 
   private gotoLobby(): void {
     this.phase = "lobby";
+    this.gameOver = false;
     this.drawerId = null;
     this.word = null;
     this.choices = [];

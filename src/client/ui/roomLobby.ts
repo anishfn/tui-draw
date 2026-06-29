@@ -13,7 +13,12 @@ import {
 import type { RoomInfo } from "../../types/index.ts";
 
 export interface LobbyOptions {
-  onCreateRoom: (name: string, password?: string, isPrivate?: boolean) => void;
+  onCreateRoom: (
+    name: string,
+    password?: string,
+    isPrivate?: boolean,
+    rounds?: number,
+  ) => void;
   onJoinRoom: (roomId: string, password?: string) => void;
 }
 
@@ -24,7 +29,7 @@ export interface LobbyHandle {
   clearError(): void;
   focusFirst(): void;
   /** Route every keypress from client/index.ts through here while in lobby. */
-  handleKeypress(key: { name: string }): void;
+  handleKeypress(key: { name: string; sequence?: string }): void;
 }
 
 export function createRoomLobby(
@@ -101,12 +106,17 @@ export function createRoomLobby(
     placeholder: "Password (optional)...",
     maxLength: 64,
   });
+  const createRoundsControl = new TextRenderable(renderer, {
+    content: "Rounds: < 3 >  (1-10)",
+    flexShrink: 0,
+  });
   const createPrivateToggle = new TextRenderable(renderer, {
     content: "[ ] Private  (Tab to toggle, hidden from room list)",
     flexShrink: 0,
   });
   createBox.add(createNameInput);
   createBox.add(createPassInput);
+  createBox.add(createRoundsControl);
   createBox.add(createPrivateToggle);
 
   /* Join form */
@@ -153,6 +163,9 @@ export function createRoomLobby(
   /* --------------------------------------------------------------------- */
 
   let isPrivate = false;
+  let rounds = 3;
+  const MIN_ROUNDS = 1;
+  const MAX_ROUNDS = 10;
 
   function renderToggle(focused: boolean): void {
     const check = isPrivate ? "x" : " ";
@@ -162,17 +175,26 @@ export function createRoomLobby(
   }
   renderToggle(false);
 
+  function renderRounds(focused: boolean): void {
+    const label = `Rounds: < ${rounds} >  (1-10, arrows to change)`;
+    createRoundsControl.content = focused ? t`${fg("#89b4fa")(label)}` : label;
+    renderer.requestRender();
+  }
+  renderRounds(false);
+
   /* --------------------------------------------------------------------- */
   /* Focus cycle — 5 slots: name, pass, [private toggle], join-code, join-pass */
   /* --------------------------------------------------------------------- */
 
   type Slot =
     | { kind: "input"; ref: InputRenderable }
+    | { kind: "rounds" }
     | { kind: "toggle" };
 
   const slots: Slot[] = [
     { kind: "input", ref: createNameInput },
     { kind: "input", ref: createPassInput },
+    { kind: "rounds" },
     { kind: "toggle" },
     { kind: "input", ref: joinCodeInput },
     { kind: "input", ref: joinPassInput },
@@ -183,6 +205,8 @@ export function createRoomLobby(
     const slot = slots[idx]!;
     if (slot.kind === "input") {
       focused ? slot.ref.focus() : slot.ref.blur();
+    } else if (slot.kind === "rounds") {
+      renderRounds(focused);
     } else {
       renderToggle(focused);
     }
@@ -199,7 +223,7 @@ export function createRoomLobby(
       return;
     }
     const pass = createPassInput.value || undefined;
-    opts.onCreateRoom(name, pass, isPrivate || undefined);
+    opts.onCreateRoom(name, pass, isPrivate || undefined, rounds);
   }
 
   function submitJoin(): void {
@@ -262,7 +286,7 @@ export function createRoomLobby(
       applyFocus(0, true);
     },
 
-    handleKeypress(key: { name: string }) {
+    handleKeypress(key: { name: string; sequence?: string }) {
       if (key.name === "tab") {
         applyFocus(focusIdx, false);
         focusIdx = (focusIdx + 1) % slots.length;
@@ -274,6 +298,18 @@ export function createRoomLobby(
       if (slot?.kind === "toggle" && (key.name === "return" || key.name === "space")) {
         isPrivate = !isPrivate;
         renderToggle(true);
+        return;
+      }
+      if (slot?.kind === "rounds") {
+        const dec = key.name === "left" || key.sequence === "<" || key.sequence === ",";
+        const inc = key.name === "right" || key.sequence === ">" || key.sequence === ".";
+        if (dec) {
+          rounds = Math.max(MIN_ROUNDS, rounds - 1);
+          renderRounds(true);
+        } else if (inc) {
+          rounds = Math.min(MAX_ROUNDS, rounds + 1);
+          renderRounds(true);
+        }
       }
     },
   };

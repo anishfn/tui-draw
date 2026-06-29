@@ -22,7 +22,7 @@ export interface ClientConfig {
   /** If set, automatically join this room after connecting. */
   autoJoin?: { roomId: string; password?: string };
   /** If set, automatically create a room after connecting. */
-  autoCreate?: { name: string; password?: string; isPrivate?: boolean };
+  autoCreate?: { name: string; password?: string; isPrivate?: boolean; rounds?: number };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -66,8 +66,8 @@ export async function startClient(config: ClientConfig = {}): Promise<void> {
   const NOT_CONNECTED = `Not connected to ${SERVER_URL} - is the server running and the address correct?`;
 
   const lobby = createRoomLobby(renderer, {
-    onCreateRoom: (name, password, isPrivate) => {
-      if (!send({ t: PacketType.CREATE_ROOM, name, password, isPrivate })) {
+    onCreateRoom: (name, password, isPrivate, rounds) => {
+      if (!send({ t: PacketType.CREATE_ROOM, name, password, isPrivate, rounds })) {
         lobby.setError(NOT_CONNECTED);
         return;
       }
@@ -142,6 +142,46 @@ export async function startClient(config: ClientConfig = {}): Promise<void> {
     renderer.requestRender();
   };
 
+  /* --- Leave-room confirm overlay (Esc twice to leave the game) ---------- */
+  const leaveOverlay = new BoxRenderable(renderer, {
+    position: "absolute",
+    top: 0, left: 0, width: "100%", height: "100%",
+    justifyContent: "center", alignItems: "center",
+    zIndex: 100, visible: false,
+  });
+  const leaveBox = new BoxRenderable(renderer, {
+    border: true, borderStyle: "rounded", borderColor: C.warn,
+    titleColor: undefined, backgroundColor: C.surface,
+    paddingTop: 1, paddingBottom: 1, paddingLeft: 3, paddingRight: 3,
+    flexDirection: "column", title: " Leave game? ", titleAlignment: "center",
+  });
+  leaveBox.add(new TextRenderable(renderer, {
+    content: t`${fg(C.text)("Leave this room and return to the lobby?")}`,
+  }));
+  leaveBox.add(new TextRenderable(renderer, {
+    content: t`${fg(C.muted)("press ")}${fg(C.warn)("Esc")}${fg(C.muted)(" again to leave, any other key to cancel")}`,
+  }));
+  leaveOverlay.add(leaveBox);
+  renderer.root.add(leaveOverlay);
+  let pendingLeave = false;
+  let leaveTimer: ReturnType<typeof setTimeout> | null = null;
+  const cancelLeave = (): void => {
+    if (!pendingLeave) return;
+    pendingLeave = false;
+    leaveOverlay.visible = false;
+    if (leaveTimer) { clearTimeout(leaveTimer); leaveTimer = null; }
+    renderer.requestRender();
+  };
+  const performLeave = (): void => {
+    cancelLeave();
+    send({ t: PacketType.LEAVE_ROOM });
+    state.feed = [];
+    state.players = [];
+    state.roomId = null;
+    dash.canvas.clear();
+    switchToLobby();
+  };
+
   /* --- Transient celebration banner -------------------------------------- */
   let toastTimer: ReturnType<typeof setTimeout> | null = null;
   const flashToast = (text: string): void => {
@@ -212,7 +252,7 @@ export async function startClient(config: ClientConfig = {}): Promise<void> {
       });
       dash.canvas.setInteractive(state.amDrawing);
       if (state.phase === "intermission") {
-        dash.showScoreboard(state.players, state.myName, state.reveal);
+        dash.showScoreboard(state.players, state.myName, state.reveal, state.gameOver);
       } else {
         dash.hideScoreboard();
       }
@@ -258,7 +298,7 @@ export async function startClient(config: ClientConfig = {}): Promise<void> {
           if (config.autoJoin) {
             send({ t: PacketType.JOIN_ROOM, ...config.autoJoin });
           } else if (config.autoCreate) {
-            send({ t: PacketType.CREATE_ROOM, name: config.autoCreate.name, password: config.autoCreate.password, isPrivate: config.autoCreate.isPrivate });
+            send({ t: PacketType.CREATE_ROOM, name: config.autoCreate.name, password: config.autoCreate.password, isPrivate: config.autoCreate.isPrivate, rounds: config.autoCreate.rounds });
           }
         }
         break;
@@ -293,6 +333,7 @@ export async function startClient(config: ClientConfig = {}): Promise<void> {
         state.timeLeft = s.timeLeft;
         state.round = s.round;
         state.totalRounds = s.totalRounds;
+        state.gameOver = s.gameOver;
         state.amHost = s.selfId !== "" && s.selfId === s.hostId;
         state.amDrawing = s.phase === "drawing" && s.selfId === s.drawerId;
         state.amChoosing = s.phase === "selecting" && s.selfId === s.drawerId;
@@ -408,6 +449,13 @@ export async function startClient(config: ClientConfig = {}): Promise<void> {
     // Any other key dismisses the quit prompt without acting on that key.
     if (pendingQuit) { cancelQuit(); return; }
 
+    // Leave-room confirm: a second Esc leaves; any other key cancels.
+    if (pendingLeave) {
+      if (key.name === "escape") { performLeave(); return; }
+      cancelLeave();
+      return;
+    }
+
     if (!state.inRoom) {
       lobby.handleKeypress(key);
       return;
@@ -436,13 +484,13 @@ export async function startClient(config: ClientConfig = {}): Promise<void> {
       return;
     }
 
+    // Esc asks before leaving (mirrors the Ctrl+C quit confirm).
     if (key.name === "escape") {
-      send({ t: PacketType.LEAVE_ROOM });
-      state.feed = [];
-      state.players = [];
-      state.roomId = null;
-      dash.canvas.clear();
-      switchToLobby();
+      pendingLeave = true;
+      leaveOverlay.visible = true;
+      renderer.requestRender();
+      if (leaveTimer) clearTimeout(leaveTimer);
+      leaveTimer = setTimeout(cancelLeave, 4000);
       return;
     }
 
@@ -461,17 +509,9 @@ export async function startClient(config: ClientConfig = {}): Promise<void> {
     // While typing a guess/chat, let the input consume everything else.
     if (chatFocused()) return;
 
-    // Lobby phase: the host starts the game and sets the round count.
+    // Lobby phase: the host starts the game. Round count is fixed at creation.
     if (state.phase === "lobby") {
       if (key.name === "s" && state.amHost) send({ t: PacketType.START_GAME });
-      if (state.amHost) {
-        const dec = key.name === "<" || key.sequence === "<" || (key.shift && key.name === ",");
-        const inc = key.name === ">" || key.sequence === ">" || (key.shift && key.name === ".");
-        if (dec || inc) {
-          const next = state.totalRounds + (inc ? 1 : -1);
-          send({ t: PacketType.SET_ROUNDS, rounds: Math.max(1, Math.min(10, next)) });
-        }
-      }
       return;
     }
 

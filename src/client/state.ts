@@ -55,6 +55,8 @@ export class ClientState {
   round = 0;
   /** Total rounds configured for the current game. */
   totalRounds = 3;
+  /** True while the final match leaderboard is being shown (after the last round). */
+  gameOver = false;
 
   /** Rolling chat + system feed (most recent last). */
   feed: FeedLine[] = [];

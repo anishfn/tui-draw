@@ -20,9 +20,9 @@ export class RoomRegistry {
   private readonly rooms = new Map<string, Room>();
   private readonly cleanupTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
-  create(name: string, password?: string, isPrivate = false): Room {
+  create(name: string, password?: string, isPrivate = false, rounds = 3): Room {
     const id = genCode(new Set(this.rooms.keys()));
-    const room = new Room(id, name, password, isPrivate);
+    const room = new Room(id, name, password, isPrivate, rounds);
     this.rooms.set(id, room);
     return room;
   }

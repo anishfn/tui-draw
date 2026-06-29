@@ -144,6 +144,11 @@ export interface GameSnapshot {
   round: number;
   /** Total rounds the host configured for this game. */
   totalRounds: number;
+  /**
+   * True during the final results screen shown after the last round, when the
+   * intermission scoreboard becomes the match leaderboard ("who won").
+   */
+  gameOver: boolean;
   /** Replay buffer so the board can be reconstructed mid-turn. */
   history: DrawPointPayload[];
 }
@@ -186,7 +191,7 @@ export type Packet =
   | { t: typeof PacketType.JOIN; name: string }
   | { t: typeof PacketType.LIST_ROOMS }
   | { t: typeof PacketType.ROOM_LIST; rooms: RoomInfo[] }
-  | { t: typeof PacketType.CREATE_ROOM; name: string; password?: string; isPrivate?: boolean }
+  | { t: typeof PacketType.CREATE_ROOM; name: string; password?: string; isPrivate?: boolean; rounds?: number }
   | { t: typeof PacketType.JOIN_ROOM; roomId: string; password?: string }
   | { t: typeof PacketType.ROOM_JOINED; roomId: string; roomName: string; password?: string }
   | { t: typeof PacketType.ROOM_ERROR; text: string }

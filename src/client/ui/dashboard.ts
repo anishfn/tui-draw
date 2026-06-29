@@ -67,8 +67,16 @@ export interface DashboardHandle {
   setCanvasStatus(status: CanvasStatus): void;
   /** Show the room code + name (+ password for private rooms) atop the canvas. */
   setRoom(code: string, name: string, password: string): void;
-  /** Show / hide the intermission scoreboard overlay. */
-  showScoreboard(players: Player[], myName: string, reveal: string | null): void;
+  /**
+   * Show / hide the intermission scoreboard overlay. When `gameOver` is true
+   * this is the final match leaderboard (announces the winner, no word reveal).
+   */
+  showScoreboard(
+    players: Player[],
+    myName: string,
+    reveal: string | null,
+    gameOver?: boolean,
+  ): void;
   hideScoreboard(): void;
   /** Show / hide the centered word-picker dialog (drawer only). */
   showWordChoice(choices: string[], timeLeft: number): void;
@@ -262,8 +270,8 @@ export function createDashboard(
         const rounds = `rounds ${s.totalRounds}`;
         statusBar.content = s.amHost
           ? s.enoughPlayers
-            ? t`${fg(C.good)("* Lobby")}   ${fg(C.text)(rounds)} ${fg(C.muted)("(< > change)")}   press ${fg(C.warn)("[S]")} to start`
-            : t`${fg(C.warn)("* Lobby")}   ${fg(C.text)(rounds)} ${fg(C.muted)("(< > change)")}   need 2+ players...`
+            ? t`${fg(C.good)("* Lobby")}   ${fg(C.text)(rounds)}   press ${fg(C.warn)("[S]")} to start`
+            : t`${fg(C.warn)("* Lobby")}   ${fg(C.text)(rounds)}   need 2+ players...`
           : t`${fg(C.info)("* Lobby")}   ${fg(C.text)(rounds)}   waiting for the host to start...`;
         return;
       }
@@ -295,10 +303,20 @@ export function createDashboard(
       renderer.requestRender();
     },
 
-    showScoreboard(players, myName, reveal) {
+    showScoreboard(players, myName, reveal, gameOver = false) {
       const ranked = [...players].sort((a, b) => b.score - a.score);
       const lines: StyledText[] = [];
-      if (reveal) lines.push(t`The word was ${fg(C.warn)(reveal)}`);
+      const winner = ranked[0];
+      if (gameOver) {
+        // Final match leaderboard: lead with the champion, no word reveal.
+        lines.push(
+          winner
+            ? t`${fg(C.warn)("Winner: ")}${fg(winner.color)(winner.avatar + " " + winner.name)}${fg(C.warn)(" with " + winner.score + " pts!")}`
+            : t`${fg(C.warn)("Game over!")}`,
+        );
+      } else if (reveal) {
+        lines.push(t`The word was ${fg(C.warn)(reveal)}`);
+      }
       lines.push(stringToStyledText(""));
       ranked.forEach((p, i) => {
         const medal = i === 0 ? "#1" : i === 1 ? "#2" : i === 2 ? "#3" : `${i + 1}.`;
@@ -307,6 +325,7 @@ export function createDashboard(
         lines.push(t`${fg(i === 0 ? C.warn : C.muted)(medal)} ${fg(p.color)(p.avatar + " " + name)}  ${fg(C.text)(String(p.score))}`);
       });
       scoreText.content = joinLines(lines);
+      score.box.title = gameOver ? " * Final Results * " : " * Scoreboard * ";
       score.layer.visible = true;
       renderer.requestRender();
     },

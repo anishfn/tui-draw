@@ -1,6 +1,6 @@
 {
   "name": "drawtui",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "A real-time multiplayer drawing & guessing game that runs entirely in the terminal, on Node (26.3+) or Bun, powered by @opentui/core.",
   "type": "module",
   "bin": {

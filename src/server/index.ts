@@ -79,7 +79,7 @@ function handlePacket(ws: ServerWebSocket<Session>, packet: Packet): void {
         send(ws, { t: PacketType.ROOM_ERROR, text: "Room name cannot be empty." });
         break;
       }
-      const room = registry.create(name, packet.password, packet.isPrivate ?? false);
+      const room = registry.create(name, packet.password, packet.isPrivate ?? false, packet.rounds ?? 3);
       room.addClient(ws);
       send(ws, { t: PacketType.ROOM_JOINED, roomId: room.id, roomName: room.name, password: room.getPassword() ?? undefined });
       send(ws, { t: PacketType.STATE_SYNC, state: room.snapshotFor(ws.data.id) });
