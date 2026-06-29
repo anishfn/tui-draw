@@ -289,7 +289,9 @@ export function createDashboard(
       }
 
       // drawing phase
-      const roundTag = `Round ${round}/${s.totalRounds}`;
+      const left = s.totalRounds - round;
+      const roundTag =
+        left > 0 ? `Round ${round}/${s.totalRounds} (${left} left)` : `Round ${round}/${s.totalRounds} (last)`;
       if (drawing) {
         statusBar.content = t`${fg(C.good)(roundTag)}  ${fg(C.accent)("YOU DRAW")}   ${hint}`;
       } else {

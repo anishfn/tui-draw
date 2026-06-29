@@ -87,6 +87,13 @@ export function createRoomLobby(
     gap: 1,
   });
 
+  /* Hint shown above the forms */
+  const formHint = new TextRenderable(renderer, {
+    content: "Tab to cycle fields | Enter to submit",
+    flexShrink: 0,
+    paddingLeft: 1,
+  });
+
   /* Create form */
   const createBox = new BoxRenderable(renderer, {
     flexShrink: 0,
@@ -141,6 +148,7 @@ export function createRoomLobby(
   joinBox.add(joinCodeInput);
   joinBox.add(joinPassInput);
 
+  rightPanel.add(formHint);
   rightPanel.add(createBox);
   rightPanel.add(joinBox);
 
@@ -149,7 +157,7 @@ export function createRoomLobby(
 
   /* --- Status bar ------------------------------------------------------ */
   const statusBar = new TextRenderable(renderer, {
-    content: "Tab to cycle fields | Enter to submit",
+    content: "",
     flexShrink: 0,
     paddingLeft: 1,
   });
@@ -270,7 +278,7 @@ export function createRoomLobby(
   }
 
   function clearError(): void {
-    statusBar.content = "Tab to cycle fields | Enter to submit";
+    statusBar.content = "";
   }
 
   return {
